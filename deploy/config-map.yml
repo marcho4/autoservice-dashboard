@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: autoservice
+data:
+  POSTGRES_DB: "autoservice"
+  HTTP_PORT: "8080"
+  LOG_LEVEL: "debug"
+  TELEGRAM_API_URL: "https://api.telegram.org"
+  JWT_TTL: "12h"
+  FRONTEND_PORT: "3000"
+  COOKIE_SECURE: "false"
