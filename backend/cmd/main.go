@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/marcho4/autoservice-dashboard/backend/pkg/logger"
 )
 
 const usage = `Usage: app <command>
@@ -21,7 +23,7 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	slog.SetDefault(newLogger(slog.LevelInfo))
+	_ = logger.SetupLogging("autoservice-backend")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

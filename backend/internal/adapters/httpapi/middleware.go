@@ -31,7 +31,7 @@ func requestLogger(base *slog.Logger) func(http.Handler) http.Handler {
 						writeError(ww, http.StatusInternalServerError, "internal", "internal server error")
 					}
 				}
-				l.Info("http request",
+				l.Log(r.Context(), statusLevel(ww.Status()), "http request",
 					"method", r.Method,
 					"path", r.URL.Path,
 					"status", ww.Status(),
@@ -41,6 +41,17 @@ func requestLogger(base *slog.Logger) func(http.Handler) http.Handler {
 			}()
 			next.ServeHTTP(ww, r.WithContext(context.WithValue(r.Context(), loggerKey{}, l)))
 		})
+	}
+}
+
+func statusLevel(status int) slog.Level {
+	switch {
+	case status >= 500:
+		return slog.LevelError
+	case status >= 400:
+		return slog.LevelWarn
+	default:
+		return slog.LevelInfo
 	}
 }
 

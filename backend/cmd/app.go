@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
 	"github.com/marcho4/autoservice-dashboard/backend/internal/app"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/config"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/gateway/postgres"
+	"github.com/marcho4/autoservice-dashboard/backend/pkg/logger"
 )
 
 func migrate(ctx context.Context) error {
@@ -19,7 +19,7 @@ func migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log := newLogger(cfg.LogLevel)
+	log := logger.SetupLogging("autoservice-migrate")
 
 	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -35,7 +35,7 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log := newLogger(cfg.LogLevel)
+	log := logger.SetupLogging("autoservice-backend")
 	slog.SetDefault(log)
 
 	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
@@ -81,8 +81,4 @@ func runServer(ctx context.Context, srv *http.Server, shutdownTimeout time.Durat
 	}
 	log.Info("server stopped gracefully")
 	return nil
-}
-
-func newLogger(level slog.Level) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 }
