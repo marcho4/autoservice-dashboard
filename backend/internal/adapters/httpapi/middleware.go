@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
 
+	"github.com/VictoriaMetrics/metrics"
+	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/marcho4/autoservice-dashboard/backend/internal/usecases"
@@ -40,6 +43,40 @@ func requestLogger(base *slog.Logger) func(http.Handler) http.Handler {
 				)
 			}()
 			next.ServeHTTP(ww, r.WithContext(context.WithValue(r.Context(), loggerKey{}, l)))
+		})
+	}
+}
+
+func requestMetrics() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+			defer func() {
+				route := chi.RouteContext(r.Context()).RoutePattern()
+				if route == "" {
+					route = "unknown"
+				}
+
+				requestDuration := metrics.GetOrCreateHistogram(fmt.Sprintf(
+					`http_request_duration_milliseconds{method=%q,route=%q}`, r.Method, route,
+				))
+				ms := float64(time.Since(start).Microseconds()) / 1000
+				requestDuration.Update(ms)
+
+				status := ww.Status()
+				if status == 0 {
+					status = http.StatusOK
+				}
+
+				metrics.GetOrCreateCounter(fmt.Sprintf(
+					`http_requests_total{method=%q,route=%q,status=%q}`,
+					r.Method, route, fmt.Sprintf("%dxx", status/100),
+				)).Inc()
+			}()
+
+			next.ServeHTTP(ww, r)
 		})
 	}
 }

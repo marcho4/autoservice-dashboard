@@ -3,7 +3,9 @@ package usecases
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/google/uuid"
 
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
@@ -39,7 +41,7 @@ func (s *BotRunnerService) CreateRequest(ctx context.Context, botID int64, who d
 	if err != nil {
 		return domain.Request{}, err
 	}
-	return s.requests.Create(ctx, domain.Request{
+	request, err := s.requests.Create(ctx, domain.Request{
 		AutoserviceID: bot.AutoserviceID,
 		ClientID:      client.ID,
 		Status:        domain.StatusNew,
@@ -48,6 +50,13 @@ func (s *BotRunnerService) CreateRequest(ctx context.Context, botID int64, who d
 		Description:   in.Description,
 		Phone:         in.Phone,
 	})
+
+	if err == nil {
+		successfulRequests := metrics.GetOrCreateCounter(fmt.Sprintf(`requests_created_total{autoservice_id=%q}`, request.AutoserviceID))
+		successfulRequests.Inc()
+	}
+
+	return request, err
 }
 
 func (s *BotRunnerService) ListClientRequests(ctx context.Context, botID, telegramID int64) ([]domain.Request, error) {

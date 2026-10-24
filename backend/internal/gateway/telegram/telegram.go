@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/usecases"
 )
@@ -42,25 +43,33 @@ func (c *Client) GetMe(ctx context.Context, token string) (usecases.TelegramBotI
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		metrics.GetOrCreateCounter("tg_network_error").Inc()
 		return usecases.TelegramBotInfo{}, fmt.Errorf("telegram getMe: %w", withoutToken(err))
 	}
 	defer resp.Body.Close()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
+		metrics.GetOrCreateCounter("tg_status_ok").Inc()
 	case http.StatusUnauthorized, http.StatusNotFound:
+		metrics.GetOrCreateCounter("tg_status_bad_req").Inc()
 		return usecases.TelegramBotInfo{}, domain.ErrInvalidBotToken
 	default:
+		metrics.GetOrCreateCounter("tg_unexpected_err").Inc()
 		return usecases.TelegramBotInfo{}, fmt.Errorf("telegram getMe: unexpected status %d", resp.StatusCode)
 	}
 
 	var body getMeResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		metrics.GetOrCreateCounter("tg_unexpected_err").Inc()
 		return usecases.TelegramBotInfo{}, fmt.Errorf("telegram getMe: decode response: %w", err)
 	}
 	if !body.OK || !body.Result.IsBot {
+		metrics.GetOrCreateCounter("tg_wrong_response").Inc()
 		return usecases.TelegramBotInfo{}, domain.ErrInvalidBotToken
 	}
+
+	metrics.GetOrCreateCounter("tg_success").Inc()
 	return usecases.TelegramBotInfo{ID: body.Result.ID, Username: body.Result.Username}, nil
 }
 
