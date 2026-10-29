@@ -118,3 +118,4 @@ histogram_quantile(0.99, sum(rate(http_request_duration_milliseconds_bucket{rout
 3. Скрин 1 (поломка_1.png) - доступность фронтенда пошла вниз.
 4. DURATION=0 ./scripts/emulate-load.sh - запустил нагрузку и сдул бд до нуля реплик `kubectl -n autoservice scale statefulset db --replicas=0`
 5. Смотрим на SLI графики в папке `sla_images`. Все графики пошли вниз, так как приложение перестало работать.
+6. После восстановления SLI график вернулся в норму `recovery.png`
