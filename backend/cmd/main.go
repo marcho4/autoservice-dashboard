@@ -16,6 +16,7 @@ const usage = `Usage: app <command>
 Commands:
   serve     start the HTTP API server
   migrate   apply pending database migrations
+  probe     run the black-box prober and expose its metrics
 `
 
 func main() {
@@ -34,6 +35,8 @@ func main() {
 		err = serve(ctx)
 	case "migrate":
 		err = migrate(ctx)
+	case "probe":
+		err = probe(ctx)
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

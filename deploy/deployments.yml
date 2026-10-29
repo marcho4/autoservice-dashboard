@@ -167,3 +167,44 @@ spec:
           requests:
             storage: 1Gi
 ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: autoservice
+  name: prober
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prober
+  template:
+    metadata:
+      labels:
+        app: prober
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - image: backend-t-academy:latest
+        imagePullPolicy: IfNotPresent
+        name: prober
+        command: ["./app", "probe"]
+        ports:
+        - containerPort: 8081
+        env:
+        - name: HTTP_PORT
+          value: "8081"
+        - name: PROBER_TARGETS
+          value: "backend=http://backend:8080/readyz,frontend=http://frontend:3000/healthz"
+        - name: PROBER_INTERVAL
+          value: "15s"
+        - name: PROBER_TIMEOUT
+          value: "5s"
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: LOG_LEVEL
+---

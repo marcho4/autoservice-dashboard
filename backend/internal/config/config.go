@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,6 +20,10 @@ type Config struct {
 	TelegramAPIURL  string
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
+
+	ProbeTargets  map[string]string
+	ProbeInterval time.Duration
+	ProbeTimeout  time.Duration
 }
 
 func LoadDB() (Config, error) {
@@ -43,6 +49,19 @@ func Load() (Config, error) {
 	}
 	if c.BotAPIKey != "" && len(c.BotAPIKey) < 16 {
 		errs = append(errs, errors.New("BOT_API_KEY must be at least 16 characters"))
+	}
+	return c, errors.Join(errs...)
+}
+
+func LoadProber() (Config, error) {
+	var errs []error
+	c := Config{
+		HTTPPort:        intVar("HTTP_PORT", 8081, &errs),
+		ShutdownTimeout: durationVar("SHUTDOWN_TIMEOUT", 15*time.Second, &errs),
+		LogLevel:        logLevel(&errs),
+		ProbeTargets:    targetsVar("PROBER_TARGETS", &errs),
+		ProbeInterval:   durationVar("PROBER_INTERVAL", 15*time.Second, &errs),
+		ProbeTimeout:    durationVar("PROBER_TIMEOUT", 5*time.Second, &errs),
 	}
 	return c, errors.Join(errs...)
 }
@@ -84,6 +103,25 @@ func durationVar(name string, def time.Duration, errs *[]error) time.Duration {
 		*errs = append(*errs, fmt.Errorf("%s must be a duration like 24h", name))
 	}
 	return d
+}
+
+// Формат "backend=http://backend:8080/readyz,frontend=http://frontend:3000/healthz".
+func targetsVar(name string, errs *[]error) map[string]string {
+	targets := map[string]string{}
+	for item := range strings.SplitSeq(required(name, errs), ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		service, target, ok := strings.Cut(item, "=")
+		u, err := url.Parse(target)
+		if !ok || service == "" || err != nil || u.Host == "" {
+			*errs = append(*errs, fmt.Errorf("%s: invalid target %q, expected <service>=<url>", name, item))
+			continue
+		}
+		targets[service] = target
+	}
+	return targets
 }
 
 func logLevel(errs *[]error) slog.Level {

@@ -39,3 +39,19 @@ spec:
     app: frontend
   type: NodePort
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vmui
+  namespace: autoservice
+spec:
+  ports:
+    - port: 8428
+      targetPort: 8428
+      nodePort: 30428
+  selector:
+    app.kubernetes.io/instance: vmsingle
+    app.kubernetes.io/name: victoria-metrics-single
+    app: server
+  type: NodePort
+---
