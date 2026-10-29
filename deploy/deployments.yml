@@ -24,9 +24,11 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       containers:
-      - image: backend-t-academy:latest
+      - image: backend-t-academy:goroutine-test-1
         imagePullPolicy: IfNotPresent
         name: backend
+        command: ["./app"]
+        args: ["serve", "spam"]
         ports:
         - containerPort: 8080
         envFrom:

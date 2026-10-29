@@ -14,9 +14,9 @@ import (
 const usage = `Usage: app <command>
 
 Commands:
-  serve     start the HTTP API server
-  migrate   apply pending database migrations
-  probe     run the black-box prober and expose its metrics
+  serve [spam]  start the HTTP API server; spam adds 150 goroutines for 15 minutes
+  migrate       apply pending database migrations
+  probe         run the black-box prober and expose its metrics
 `
 
 func main() {
@@ -32,7 +32,8 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "serve":
-		err = serve(ctx)
+		spamGo := len(os.Args) > 2 && os.Args[2] == "spam"
+		err = serve(ctx, spamGo)
 	case "migrate":
 		err = migrate(ctx)
 	case "probe":

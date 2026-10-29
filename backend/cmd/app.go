@@ -30,13 +30,27 @@ func migrate(ctx context.Context) error {
 	return postgres.Migrate(ctx, pool, log)
 }
 
-func serve(ctx context.Context) error {
+func serve(ctx context.Context, spamGo bool) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	log := logger.SetupLogging("autoservice-backend")
 	slog.SetDefault(log)
+
+	if spamGo {
+		slog.Info("Starting goroutines to test alert", "count", 150, "duration", 15*time.Minute)
+		for range 150 {
+			go func() {
+				timer := time.NewTimer(15 * time.Minute)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}
 
 	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
