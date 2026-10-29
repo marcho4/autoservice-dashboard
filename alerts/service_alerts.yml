@@ -1,0 +1,70 @@
+groups:
+  - name: service_alerts
+    rules:
+      - alert: SlowRequests
+        expr: |
+          histogram_share(
+            500,
+            sum(rate(http_request_duration_milliseconds_bucket{
+              route="/internal/v1/bots/{botID}/requests"
+            }[5m])) by (vmrange)
+          )
+          <
+          0.95 * histogram_share(
+            500,
+            sum(rate(http_request_duration_milliseconds_bucket{
+              route="/internal/v1/bots/{botID}/requests"
+            }[5m] offset 5m)) by (vmrange)
+          )
+        labels:
+          severity: critical
+        annotations:
+          summary: "Скорость ручки /internal/v1/bots/{botID}/requests ухудшилась на 5% за последние 5 минут"
+      - alert: SuccessfulRequestShareDropped
+        expr: |
+          WITH (
+            total_now = sum(rate(http_requests_total{
+              route="/internal/v1/bots/{botID}/requests"
+            }[5m])),
+            errors_now = sum(rate(http_requests_total{
+              route="/internal/v1/bots/{botID}/requests",
+              status="5xx"
+            }[5m])) default 0,
+            total_prev = sum(rate(http_requests_total{
+              route="/internal/v1/bots/{botID}/requests"
+            }[5m] offset 5m)),
+            errors_prev = sum(rate(http_requests_total{
+              route="/internal/v1/bots/{botID}/requests",
+              status="5xx"
+            }[5m] offset 5m)) default 0,
+            success_now = 1 - errors_now / total_now,
+            success_prev = 1 - errors_prev / total_prev
+          )
+          (success_now <= success_prev * 0.95)
+            and (success_prev > 0)
+            and (total_now > 0)
+            and (total_prev > 0)
+        labels:
+          severity: critical
+        annotations:
+          summary: "Доля ответов без 5xx снизилась минимум на 5%"
+          description: "Последние 5 минут сравниваются с предыдущими 5 минутами."
+      - alert: BackendIsNotReady
+        expr: increase(prober_check{result="ok",service="backend"}[1m]) == 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Бэкенд не работает 1 минуту"
+      - alert: FrontendIsNotReady
+        expr: increase(prober_check{result="ok",service="frontend"}[1m]) == 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Фронтенд не работает 1 минуту"
+      - alert: ProberNotUp
+        expr: up{job="autoservice-dashboard-metrics",instance=~".*:8081"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Не работает prober"

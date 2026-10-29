@@ -1,0 +1,26 @@
+groups:
+  - name: runtime
+    rules:
+      - alert: SlowGC
+        expr: | 
+          1000 * histogram_quantile(
+            0.99,
+            sum by (instance, le) (
+              rate(go_gc_pauses_seconds_bucket{
+                job="autoservice-dashboard-metrics",
+                instance=~".*:8080"
+              }[5m])
+            )
+          ) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GC работает больше 100ms"
+      - alert: BackendTooManyGoroutines
+        expr: go_goroutines{job="autoservice-dashboard-metrics",instance=~".*:8080"} > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Больше 100 горутин за 10м"
