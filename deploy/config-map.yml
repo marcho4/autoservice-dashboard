@@ -8,6 +8,11 @@ data:
   HTTP_PORT: "8080"
   LOG_LEVEL: "debug"
   TELEGRAM_API_URL: "https://api.telegram.org"
+  # OpenAI-совместимая LLM для бота; пустой LLM_MODEL отключает её (клиент выбирает услугу кнопкой).
+  LLM_BASE_URL: "https://api.openai.com/v1"
+  LLM_MODEL: "gpt-4o-mini"
+  # Публичный https-адрес кабинета для кнопки «Открыть в CRM» в уведомлениях мастеру.
+  APP_URL: ""
   JWT_TTL: "12h"
   FRONTEND_PORT: "3000"
   COOKIE_SECURE: "false"

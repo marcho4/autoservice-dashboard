@@ -32,8 +32,12 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
       JWT_TTL: ${JWT_TTL}
-      BOT_API_KEY: ${BOT_API_KEY}
+      BOT_API_KEY: ${BOT_API_KEY:-}
       TELEGRAM_API_URL: ${TELEGRAM_API_URL}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      APP_URL: ${APP_URL:-}
       LOG_LEVEL: ${LOG_LEVEL}
     ports:
       - "${API_PORT}:${API_PORT}"

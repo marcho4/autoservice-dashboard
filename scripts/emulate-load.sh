@@ -88,18 +88,22 @@ register() {
 
 phone() { printf '+7 9%02d %03d-%02d-%02d' $((RANDOM % 100)) $((RANDOM % 1000)) $((RANDOM % 100)) $((RANDOM % 100)); }
 
+SERVICES_NAMES=("Диагностика" "Техобслуживание и замена масла" "Ремонт" "Шиномонтаж")
+
 # Поля заявки без фигурных скобок: при создании их склеивают с "client".
 request_fields() {
-  local car
+  local car problem
   car=$(pick $CARS)
-  printf '"car_brand":"%s","car_model":"%s","description":"%s","phone":"%s"' \
-    "${car%%:*}" "${car#*:}" "$(pick "${PROBLEMS[@]}")" "${1:-$(phone)}"
+  problem=$(pick "${PROBLEMS[@]}")
+  printf '"service_name":"%s","answers":[{"label":"Автомобиль","value":"%s %s"},{"label":"Что нужно сделать","value":"%s"}],"message":"%s, %s","phone":"%s"' \
+    "$(pick "${SERVICES_NAMES[@]}")" "${car%%:*}" "${car#*:}" "$problem" "$problem" "${car#*:}" "${1:-$(phone)}"
 }
 
 bot_worker() {
   local bot=$1 tg client id r
   while :; do
-    tg=$((700000000 + RANDOM % 300)) # у каждого бота ~300 постоянных клиентов
+    # У каждого бота ~3000 постоянных клиентов: у одного клиента может быть не больше 5 необработанных заявок (иначе 429).
+    tg=$((700000000 + RANDOM % 3000))
     client="\"client\":{\"telegram_id\":$tg,\"telegram_username\":\"user$tg\",\"name\":\"$(pick $NAMES)\"}"
     r=$((RANDOM % 100))
     if [ "$r" -lt 55 ]; then
@@ -198,6 +202,7 @@ setup_services() {
     [ "$CODE" = 201 ] || die "создание автосервиса: $CODE $BODY"
     as_id=$(jq -r .id <<<"$BODY")
     # Через API бота не подключить: бэкенд проверяет токен в api.telegram.org. Поэтому кладём его прямо в БД.
+    # Встроенный раннер попробует опросить такого бота, получит от Telegram отказ и покажет статус error — это ожидаемо.
     bot_id=$((run * 100 + i))
     psql_db "INSERT INTO bots (autoservice_id, telegram_bot_id, username, token)
              VALUES ('$as_id', $bot_id, 'loadtest_${bot_id}_bot', '$bot_id:$FAKE_BOT_SECRET')" >/dev/null ||
