@@ -58,6 +58,9 @@ func NewBotRunner(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *bot.
 	if cfg.LLMModel != "" {
 		extractor = llm.New(llm.Config{BaseURL: cfg.LLMBaseURL, APIKey: cfg.LLMAPIKey, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout})
 		log.Info("bot uses LLM to recognize requests", "model", cfg.LLMModel, "base_url", cfg.LLMBaseURL)
+		if cfg.LLMAPIKey == "" {
+			log.Warn("LLM_API_KEY is empty: fine for a local model server, but a hosted API will reject the requests")
+		}
 	} else {
 		log.Warn("LLM_MODEL is not set: the bot will ask clients to pick a service with buttons")
 	}

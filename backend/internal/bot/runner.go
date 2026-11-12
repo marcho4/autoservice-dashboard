@@ -190,8 +190,12 @@ func (r *Runner) poll(ctx context.Context, bot domain.Bot) {
 		var updates []telegram.Update
 		var err error
 		if !ready {
-			err = r.tg.Setup(ctx, bot.Token, commands)
-			ready = err == nil
+			if err = r.tg.Setup(ctx, bot.Token, commands); err == nil {
+				ready = true
+				// Telegram accepted the token: the owner should see the bot as running now,
+				// not when the first long poll returns half a minute later.
+				report(domain.BotRunning, "")
+			}
 		}
 		if ready {
 			updates, err = r.tg.GetUpdates(ctx, bot.Token, offset, r.cfg.PollTimeout)

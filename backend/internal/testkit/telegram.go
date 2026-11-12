@@ -215,6 +215,21 @@ func (t *Telegram) NextMessage(token string, chatID int64, timeout time.Duration
 	}
 }
 
+// Sent returns everything the bot has sent to the chat so far, in order.
+func (t *Telegram) Sent(token string, chatID int64) []SentMessage {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []SentMessage
+	if b := t.bots[token]; b != nil {
+		for _, m := range b.sent {
+			if m.ChatID == chatID {
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
 // Message returns the current state of a sent message, including later edits.
 func (t *Telegram) Message(token string, messageID int64) SentMessage {
 	t.mu.Lock()

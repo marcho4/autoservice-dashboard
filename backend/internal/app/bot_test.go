@@ -247,3 +247,21 @@ func TestOnlyOneRunnerPollsTelegram(t *testing.T) {
 	client := &chat{a: a, token: tokenA, user: testkit.TelegramUser{ID: 42, FirstName: "Пётр"}}
 	client.say("/start").next("Здравствуйте! Чем могу помочь?")
 }
+
+func TestBotIsReportedRunningBeforeFirstPollReturns(t *testing.T) {
+	a := setup(t)
+	// Production timing: an idle long poll returns only after tens of seconds.
+	a.cfg.Runner.PollTimeout = 30 * time.Second
+	tok := register(a, "owner@example.com")
+	expect(t, a.do("POST", "/api/v1/autoservice", tok, map[string]string{"name": "Гараж"}), 201, "create autoservice")
+	expect(t, a.do("PUT", "/api/v1/autoservice/bot", tok, map[string]string{"token": tokenA}), 200, "connect bot")
+
+	startRunner(a)
+	start := time.Now()
+	eventually(t, "bot is running", func() bool {
+		return a.do("GET", "/api/v1/autoservice/bot", tok, nil).body["status"] == "running"
+	})
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("the owner waited %s to see the bot running", took)
+	}
+}

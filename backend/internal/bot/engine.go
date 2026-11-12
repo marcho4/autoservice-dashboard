@@ -140,6 +140,11 @@ const (
 	llmWindow        = time.Hour
 	llmCallsPerChat  = 20
 	maxListedOrders  = 5
+
+	// Telegram rejects messages over 4096 characters. Long answers are shortened in the summary and in the
+	// master notification so that even a full form of maximum-length answers fits; the CRM keeps them whole.
+	shownAnswerLength  = 150
+	shownMessageLength = 300
 )
 
 const (
@@ -522,7 +527,7 @@ func (t *turn) showSummaryOf(svc domain.Service, intro string) error {
 	b.WriteString("<b>Проверьте заявку</b>\n\n")
 	fmt.Fprintf(&b, "Услуга: <b>%s</b>\n", esc(svc.Name))
 	for _, a := range t.answers(svc) {
-		fmt.Fprintf(&b, "%s: %s\n", esc(a.Label), esc(a.Value))
+		fmt.Fprintf(&b, "%s: %s\n", esc(a.Label), esc(truncate(a.Value, shownAnswerLength)))
 	}
 	fmt.Fprintf(&b, "Телефон: %s\n\nВсё верно?", esc(domain.FormatPhone(t.st.Phone)))
 	t.say(join(intro, b.String())).Buttons = [][]Button{
@@ -604,7 +609,7 @@ func newRequestNotice(req domain.Request, who domain.ClientIdentity) string {
 	fmt.Fprintf(&b, "🆕 <b>Новая заявка №%d</b>\n\n", req.Number)
 	fmt.Fprintf(&b, "Услуга: <b>%s</b>\n", esc(req.ServiceName))
 	for _, a := range req.Answers {
-		fmt.Fprintf(&b, "%s: %s\n", esc(a.Label), esc(a.Value))
+		fmt.Fprintf(&b, "%s: %s\n", esc(a.Label), esc(truncate(a.Value, shownAnswerLength)))
 	}
 	client := who.Name
 	if who.TelegramUsername != "" {
@@ -615,7 +620,7 @@ func newRequestNotice(req domain.Request, who domain.ClientIdentity) string {
 	}
 	fmt.Fprintf(&b, "\nТелефон: %s", esc(req.Phone))
 	if req.Message != "" {
-		fmt.Fprintf(&b, "\n\n<i>Сообщение клиента:</i>\n%s", esc(truncate(req.Message, 700)))
+		fmt.Fprintf(&b, "\n\n<i>Сообщение клиента:</i>\n%s", esc(truncate(req.Message, shownMessageLength)))
 	}
 	return b.String()
 }

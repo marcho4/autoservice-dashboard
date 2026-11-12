@@ -503,3 +503,33 @@ func TestClientInputIsEscaped(t *testing.T) {
 	d.text("<b>Жигули</b> & co").text("1").click("Пропустить").text("+79001112233").
 		expect("Автомобиль: &lt;b&gt;Жигули&lt;/b&gt; &amp; co")
 }
+
+func TestLongestFormFitsTelegramMessage(t *testing.T) {
+	const telegramLimit = 4096
+	long := domain.Service{ID: uuid.New(), Name: strings.Repeat("У", 60), Active: true}
+	for i := range domain.MaxServiceFields {
+		long.Fields = append(long.Fields, domain.FormField{
+			ID: "f" + strings.Repeat("0", 3) + string(rune('a'+i)), Label: strings.Repeat("Я", 60), Type: domain.FieldText, Required: true,
+		})
+	}
+	d := newDialog(t, nil)
+	d.backend.services = []domain.Service{long}
+	d.backend.recipients = []domain.NotifyRecipient{{ChatID: masterChat}}
+
+	d.text(strings.Repeat("щ", maxMessageLength+100))
+	for range long.Fields {
+		d.text(strings.Repeat("ж", domain.MaxAnswerLength+100))
+	}
+	d.text("+79001112233").expect("Проверьте заявку")
+	summary := d.last.Messages
+	d.click("✅ Отправить").expect("принята")
+	for _, m := range append(summary, d.last.Messages...) {
+		if n := len([]rune(m.Text)); n > telegramLimit {
+			t.Errorf("message of %d characters does not fit into Telegram", n)
+		}
+	}
+	// Nothing is lost: the CRM gets the answers in full.
+	if got := len([]rune(d.backend.requests[0].Answers[0].Value)); got != domain.MaxAnswerLength {
+		t.Errorf("stored answer has %d characters, want %d", got, domain.MaxAnswerLength)
+	}
+}
