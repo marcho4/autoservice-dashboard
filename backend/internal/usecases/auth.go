@@ -12,14 +12,15 @@ import (
 )
 
 type AuthService struct {
-	employees EmployeeRepository
-	revoked   RevokedTokenRepository
-	hasher    PasswordHasher
-	tokens    TokenManager
+	employees    EmployeeRepository
+	revoked      RevokedTokenRepository
+	hasher       PasswordHasher
+	tokens       TokenManager
+	autoservices *AutoserviceService
 }
 
-func NewAuthService(e EmployeeRepository, r RevokedTokenRepository, h PasswordHasher, t TokenManager) *AuthService {
-	return &AuthService{employees: e, revoked: r, hasher: h, tokens: t}
+func NewAuthService(e EmployeeRepository, r RevokedTokenRepository, h PasswordHasher, t TokenManager, a *AutoserviceService) *AuthService {
+	return &AuthService{employees: e, revoked: r, hasher: h, tokens: t, autoservices: a}
 }
 
 type Session struct {
@@ -38,6 +39,8 @@ type RegisterInput struct {
 	Email    string
 	Password string
 	FullName string
+	// AutoserviceName, when set, registers the owner's autoservice in the same step.
+	AutoserviceName string
 }
 
 func (s *AuthService) Register(ctx context.Context, in RegisterInput) (Session, error) {
@@ -52,6 +55,13 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (Session, 
 	if err := domain.ValidatePassword(in.Password); err != nil {
 		return Session{}, err
 	}
+	autoservice := domain.AutoserviceInput{Name: in.AutoserviceName}
+	if in.AutoserviceName != "" {
+		// Validate before the account exists, so a bad name does not leave a half-registered owner.
+		if autoservice, err = autoservice.Normalize(); err != nil {
+			return Session{}, err
+		}
+	}
 	hash, err := s.hasher.Hash(in.Password)
 	if err != nil {
 		return Session{}, fmt.Errorf("hash password: %w", err)
@@ -59,6 +69,11 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (Session, 
 	emp, err := s.employees.Create(ctx, domain.Employee{Email: email, FullName: name, PasswordHash: hash})
 	if err != nil {
 		return Session{}, err
+	}
+	if in.AutoserviceName != "" {
+		if _, err := s.autoservices.Create(ctx, emp.ID, autoservice); err != nil {
+			return Session{}, fmt.Errorf("create autoservice: %w", err)
+		}
 	}
 	return s.newSession(emp)
 }

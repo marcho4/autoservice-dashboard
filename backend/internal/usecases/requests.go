@@ -18,12 +18,24 @@ func NewDashboardService(a *AutoserviceService, c ClientRepository, r RequestRep
 	return &DashboardService{autoservices: a, clients: c, requests: r}
 }
 
-func (s *DashboardService) ListRequests(ctx context.Context, employeeID uuid.UUID, f domain.RequestFilter) ([]domain.RequestWithClient, int, error) {
+type RequestPage struct {
+	Items []domain.RequestWithClient
+	Total int
+	// Counts covers all requests of the autoservice regardless of the filter, for the status tabs.
+	Counts domain.RequestCounts
+}
+
+func (s *DashboardService) ListRequests(ctx context.Context, employeeID uuid.UUID, f domain.RequestFilter) (RequestPage, error) {
 	a, err := s.autoservices.Get(ctx, employeeID)
 	if err != nil {
-		return nil, 0, err
+		return RequestPage{}, err
 	}
-	return s.requests.List(ctx, a.ID, normalizeFilter(f))
+	items, total, err := s.requests.List(ctx, a.ID, normalizeFilter(f))
+	if err != nil {
+		return RequestPage{}, err
+	}
+	counts, err := s.requests.Counts(ctx, a.ID)
+	return RequestPage{Items: items, Total: total, Counts: counts}, err
 }
 
 func (s *DashboardService) GetRequest(ctx context.Context, employeeID, requestID uuid.UUID) (domain.RequestWithClient, error) {
@@ -43,6 +55,23 @@ func (s *DashboardService) ChangeStatus(ctx context.Context, employeeID, request
 		return domain.RequestWithClient{}, domain.ErrInvalidTransition
 	}
 	updated, err := s.requests.UpdateStatus(ctx, current.AutoserviceID, current.ID, current.Status, to)
+	if err != nil {
+		return domain.RequestWithClient{}, err
+	}
+	current.Request = updated
+	return current, nil
+}
+
+func (s *DashboardService) UpdateNote(ctx context.Context, employeeID, requestID uuid.UUID, note string) (domain.RequestWithClient, error) {
+	note, err := domain.NormalizeNote(note)
+	if err != nil {
+		return domain.RequestWithClient{}, err
+	}
+	current, err := s.GetRequest(ctx, employeeID, requestID)
+	if err != nil {
+		return domain.RequestWithClient{}, err
+	}
+	updated, err := s.requests.UpdateNote(ctx, current.AutoserviceID, current.ID, note)
 	if err != nil {
 		return domain.RequestWithClient{}, err
 	}

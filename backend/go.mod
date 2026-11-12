@@ -3,6 +3,7 @@ module github.com/marcho4/autoservice-dashboard/backend
 go 1.26.0
 
 require (
+	github.com/VictoriaMetrics/metrics v1.44.1
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
@@ -11,7 +12,6 @@ require (
 )
 
 require (
-	github.com/VictoriaMetrics/metrics v1.44.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

@@ -15,6 +15,9 @@ var (
 	ErrInvalidBotToken    = errors.New("telegram rejected the bot token")
 	ErrInvalidTransition  = errors.New("status transition is not allowed")
 	ErrRequestNotEditable = errors.New("request can be changed only in status new")
+	ErrTooManyRequests    = errors.New("client has too many open requests")
+	ErrServiceLimit       = errors.New("too many services")
+	ErrServicesExist      = errors.New("autoservice already has services")
 )
 
 type ValidationError struct {

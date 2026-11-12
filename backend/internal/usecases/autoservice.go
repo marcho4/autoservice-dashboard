@@ -27,6 +27,7 @@ func (s *AutoserviceService) Get(ctx context.Context, employeeID uuid.UUID) (dom
 	return a, err
 }
 
+// Create registers the autoservice with the starter service catalog, so the bot is useful as soon as its token is connected.
 func (s *AutoserviceService) Create(ctx context.Context, employeeID uuid.UUID, in domain.AutoserviceInput) (domain.Autoservice, error) {
 	in, err := in.Normalize()
 	if err != nil {
@@ -38,7 +39,7 @@ func (s *AutoserviceService) Create(ctx context.Context, employeeID uuid.UUID, i
 		Address:     in.Address,
 		Phone:       in.Phone,
 		Description: in.Description,
-	})
+	}, domain.DefaultServices())
 }
 
 func (s *AutoserviceService) Update(ctx context.Context, employeeID uuid.UUID, in domain.AutoserviceInput) (domain.Autoservice, error) {
@@ -61,6 +62,7 @@ func (s *AutoserviceService) Delete(ctx context.Context, employeeID uuid.UUID) e
 	return s.autoservices.Delete(ctx, a.ID)
 }
 
+// ConnectBot verifies the token with Telegram and saves it; the bot runner notices the new token and starts polling on its own.
 func (s *AutoserviceService) ConnectBot(ctx context.Context, employeeID uuid.UUID, token string) (domain.Bot, error) {
 	token, err := domain.NormalizeBotToken(token)
 	if err != nil {
@@ -79,19 +81,29 @@ func (s *AutoserviceService) ConnectBot(ctx context.Context, employeeID uuid.UUI
 		TelegramBotID: info.ID,
 		Username:      info.Username,
 		Token:         token,
+		LinkCode:      domain.NewLinkCode(),
 	})
 }
 
-func (s *AutoserviceService) GetBot(ctx context.Context, employeeID uuid.UUID) (domain.Bot, error) {
+type BotDetails struct {
+	Bot        domain.Bot
+	Recipients []domain.NotifyRecipient
+}
+
+func (s *AutoserviceService) GetBot(ctx context.Context, employeeID uuid.UUID) (BotDetails, error) {
 	a, err := s.Get(ctx, employeeID)
 	if err != nil {
-		return domain.Bot{}, err
+		return BotDetails{}, err
 	}
 	bot, err := s.bots.GetByAutoservice(ctx, a.ID)
 	if errors.Is(err, domain.ErrNotFound) {
-		return domain.Bot{}, domain.ErrBotNotConnected
+		return BotDetails{}, domain.ErrBotNotConnected
 	}
-	return bot, err
+	if err != nil {
+		return BotDetails{}, err
+	}
+	recipients, err := s.bots.ListRecipients(ctx, a.ID)
+	return BotDetails{Bot: bot, Recipients: recipients}, err
 }
 
 func (s *AutoserviceService) DisconnectBot(ctx context.Context, employeeID uuid.UUID) error {
@@ -104,4 +116,12 @@ func (s *AutoserviceService) DisconnectBot(ctx context.Context, employeeID uuid.
 		return domain.ErrBotNotConnected
 	}
 	return err
+}
+
+func (s *AutoserviceService) RemoveRecipient(ctx context.Context, employeeID uuid.UUID, chatID int64) error {
+	a, err := s.Get(ctx, employeeID)
+	if err != nil {
+		return err
+	}
+	return s.bots.RemoveRecipient(ctx, a.ID, chatID)
 }

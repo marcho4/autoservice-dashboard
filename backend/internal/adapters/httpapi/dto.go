@@ -94,21 +94,43 @@ func (d autoserviceInputDTO) toDomain() domain.AutoserviceInput {
 	}
 }
 
-type botDTO struct {
-	Username      string    `json:"username"`
-	TelegramBotID int64     `json:"telegram_bot_id"`
-	MaskedToken   string    `json:"masked_token"`
-	ConnectedAt   time.Time `json:"connected_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+type recipientDTO struct {
+	ChatID    int64     `json:"chat_id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
-func toBot(b domain.Bot) botDTO {
+type botDTO struct {
+	Username      string           `json:"username"`
+	TelegramBotID int64            `json:"telegram_bot_id"`
+	MaskedToken   string           `json:"masked_token"`
+	Link          string           `json:"link"`
+	Status        domain.BotStatus `json:"status"`
+	StatusError   string           `json:"status_error"`
+	StatusAt      time.Time        `json:"status_at"`
+	// NotifyLink is the one-time deep link a master opens to get new requests in Telegram.
+	NotifyLink  string         `json:"notify_link"`
+	Recipients  []recipientDTO `json:"recipients"`
+	ConnectedAt time.Time      `json:"connected_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+}
+
+func toBot(d usecases.BotDetails) botDTO {
+	b := d.Bot
 	return botDTO{
 		Username:      b.Username,
 		TelegramBotID: b.TelegramBotID,
 		MaskedToken:   domain.MaskBotToken(b.Token),
-		ConnectedAt:   b.CreatedAt,
-		UpdatedAt:     b.UpdatedAt,
+		Link:          b.Link(),
+		Status:        b.Status,
+		StatusError:   b.StatusError,
+		StatusAt:      b.StatusAt,
+		NotifyLink:    b.MasterLink(),
+		Recipients: mapAll(d.Recipients, func(r domain.NotifyRecipient) recipientDTO {
+			return recipientDTO{ChatID: r.ChatID, Name: r.Name, CreatedAt: r.CreatedAt}
+		}),
+		ConnectedAt: b.CreatedAt,
+		UpdatedAt:   b.UpdatedAt,
 	}
 }
 
@@ -181,13 +203,76 @@ func (d clientIdentityDTO) toDomain() domain.ClientIdentity {
 	}
 }
 
+type fieldDTO struct {
+	ID       string   `json:"id"`
+	Label    string   `json:"label"`
+	Question string   `json:"question"`
+	Type     string   `json:"type"`
+	Required bool     `json:"required"`
+	Options  []string `json:"options"`
+}
+
+type serviceDTO struct {
+	ID          uuid.UUID  `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	IsActive    bool       `json:"is_active"`
+	Fields      []fieldDTO `json:"fields"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func toService(s domain.Service) serviceDTO {
+	return serviceDTO{
+		ID:          s.ID,
+		Name:        s.Name,
+		Description: s.Description,
+		IsActive:    s.Active,
+		Fields: mapAll(s.Fields, func(f domain.FormField) fieldDTO {
+			options := f.Options
+			if options == nil {
+				options = []string{}
+			}
+			return fieldDTO{ID: f.ID, Label: f.Label, Question: f.Question, Type: string(f.Type), Required: f.Required, Options: options}
+		}),
+		CreatedAt: s.CreatedAt,
+		UpdatedAt: s.UpdatedAt,
+	}
+}
+
+type serviceInputDTO struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	IsActive    *bool      `json:"is_active"`
+	Fields      []fieldDTO `json:"fields"`
+}
+
+func (d serviceInputDTO) toDomain() domain.ServiceInput {
+	return domain.ServiceInput{
+		Name:        d.Name,
+		Description: d.Description,
+		Active:      d.IsActive == nil || *d.IsActive,
+		Fields: mapAll(d.Fields, func(f fieldDTO) domain.FormField {
+			return domain.FormField{ID: f.ID, Label: f.Label, Question: f.Question, Type: domain.FieldType(f.Type), Required: f.Required, Options: f.Options}
+		}),
+	}
+}
+
+type answerDTO struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 type requestDTO struct {
 	ID          uuid.UUID            `json:"id"`
+	Number      int                  `json:"number"`
 	Status      domain.RequestStatus `json:"status"`
-	CarBrand    string               `json:"car_brand"`
-	CarModel    string               `json:"car_model"`
-	Description string               `json:"description"`
+	ServiceID   *uuid.UUID           `json:"service_id"`
+	ServiceName string               `json:"service_name"`
+	Answers     []answerDTO          `json:"answers"`
+	Message     string               `json:"message"`
 	Phone       string               `json:"phone"`
+	Note        string               `json:"note"`
 	CreatedAt   time.Time            `json:"created_at"`
 	UpdatedAt   time.Time            `json:"updated_at"`
 }
@@ -195,11 +280,14 @@ type requestDTO struct {
 func toRequest(r domain.Request) requestDTO {
 	return requestDTO{
 		ID:          r.ID,
+		Number:      r.Number,
 		Status:      r.Status,
-		CarBrand:    r.CarBrand,
-		CarModel:    r.CarModel,
-		Description: r.Description,
+		ServiceID:   r.ServiceID,
+		ServiceName: r.ServiceName,
+		Answers:     mapAll(r.Answers, func(a domain.Answer) answerDTO { return answerDTO(a) }),
+		Message:     r.Message,
 		Phone:       r.Phone,
+		Note:        r.Note,
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}
@@ -214,18 +302,36 @@ func toRequestWithClient(r domain.RequestWithClient) requestWithClientDTO {
 	return requestWithClientDTO{requestDTO: toRequest(r.Request), Client: toClient(r.Client)}
 }
 
+type requestPageDTO struct {
+	Items  []requestWithClientDTO       `json:"items"`
+	Total  int                          `json:"total"`
+	Counts map[domain.RequestStatus]int `json:"counts"`
+}
+
+func toRequestPage(p usecases.RequestPage) requestPageDTO {
+	counts := map[domain.RequestStatus]int{
+		domain.StatusNew: 0, domain.StatusInProgress: 0, domain.StatusClosed: 0, domain.StatusRejected: 0, domain.StatusCancelled: 0,
+	}
+	for status, n := range p.Counts {
+		counts[status] = n
+	}
+	return requestPageDTO{Items: mapAll(p.Items, toRequestWithClient), Total: p.Total, Counts: counts}
+}
+
 type requestInputDTO struct {
-	CarBrand    string `json:"car_brand"`
-	CarModel    string `json:"car_model"`
-	Description string `json:"description"`
-	Phone       string `json:"phone"`
+	ServiceID   *uuid.UUID  `json:"service_id"`
+	ServiceName string      `json:"service_name"`
+	Answers     []answerDTO `json:"answers"`
+	Message     string      `json:"message"`
+	Phone       string      `json:"phone"`
 }
 
 func (d requestInputDTO) toDomain() domain.RequestInput {
 	return domain.RequestInput{
-		CarBrand:    d.CarBrand,
-		CarModel:    d.CarModel,
-		Description: d.Description,
+		ServiceID:   d.ServiceID,
+		ServiceName: d.ServiceName,
+		Answers:     mapAll(d.Answers, func(a answerDTO) domain.Answer { return domain.Answer(a) }),
+		Message:     d.Message,
 		Phone:       d.Phone,
 	}
 }

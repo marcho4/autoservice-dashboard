@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/google/uuid"
@@ -71,12 +72,37 @@ type RequestRepo struct{ db *pgxpool.Pool }
 
 func NewRequestRepo(db *pgxpool.Pool) *RequestRepo { return &RequestRepo{db: db} }
 
-const requestColumns = `r.id, r.autoservice_id, r.client_id, r.status, r.car_brand, r.car_model, r.description, r.phone, r.created_at, r.updated_at`
+const requestColumns = `r.id, r.autoservice_id, r.client_id, r.number, r.status, r.service_id, r.service_name, r.answers, r.message, r.phone, r.note, r.created_at, r.updated_at`
 
 const requestFilterCondition = `r.autoservice_id = $1 AND ($2::text IS NULL OR r.status = $2)`
 
+// answersJSON scans the jsonb answers column into the request.
+type answersJSON struct{ dst *[]domain.Answer }
+
+func (a answersJSON) Scan(src any) error {
+	var raw []byte
+	switch v := src.(type) {
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	default:
+		return errors.New("answers: unsupported column type")
+	}
+	return json.Unmarshal(raw, a.dst)
+}
+
+func marshalAnswers(answers []domain.Answer) string {
+	if answers == nil {
+		answers = []domain.Answer{}
+	}
+	b, _ := json.Marshal(answers)
+	return string(b)
+}
+
 func requestDest(r *domain.Request) []any {
-	return []any{&r.ID, &r.AutoserviceID, &r.ClientID, &r.Status, &r.CarBrand, &r.CarModel, &r.Description, &r.Phone, &r.CreatedAt, &r.UpdatedAt}
+	return []any{&r.ID, &r.AutoserviceID, &r.ClientID, &r.Number, &r.Status, &r.ServiceID, &r.ServiceName,
+		answersJSON{&r.Answers}, &r.Message, &r.Phone, &r.Note, &r.CreatedAt, &r.UpdatedAt}
 }
 
 func scanRequest(row pgx.Row) (domain.Request, error) {
@@ -98,11 +124,21 @@ func orderBy(s domain.SortOrder) string {
 	return "r.created_at DESC, r.id DESC"
 }
 
+// Create stores the request under the next per-autoservice number.
+// A service that was deleted while the client was filling the form is stored by name only.
 func (r *RequestRepo) Create(ctx context.Context, req domain.Request) (domain.Request, error) {
 	return scanRequest(r.db.QueryRow(ctx,
-		`INSERT INTO requests AS r (autoservice_id, client_id, status, car_brand, car_model, description, phone)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING `+requestColumns,
-		req.AutoserviceID, req.ClientID, req.Status, req.CarBrand, req.CarModel, req.Description, req.Phone))
+		`WITH seq AS (
+			UPDATE autoservices SET request_seq = request_seq + 1 WHERE id = $1::uuid RETURNING request_seq
+		 )
+		 INSERT INTO requests AS r (autoservice_id, client_id, status, number, service_id, service_name, answers, message, phone)
+		 SELECT $1::uuid, $2::uuid, $3::text, seq.request_seq,
+			(SELECT s.id FROM services s WHERE s.id = $4::uuid AND s.autoservice_id = $1::uuid),
+			$5::text, $6::jsonb, $7::text, $8::text
+		 FROM seq
+		 RETURNING `+requestColumns,
+		req.AutoserviceID, req.ClientID, req.Status, req.ServiceID, req.ServiceName,
+		marshalAnswers(req.Answers), req.Message, req.Phone))
 }
 
 func (r *RequestRepo) Get(ctx context.Context, autoserviceID, id uuid.UUID) (domain.RequestWithClient, error) {
@@ -134,6 +170,30 @@ func (r *RequestRepo) List(ctx context.Context, autoserviceID uuid.UUID, f domai
 	return items, total, err
 }
 
+func (r *RequestRepo) Counts(ctx context.Context, autoserviceID uuid.UUID) (domain.RequestCounts, error) {
+	rows, err := r.db.Query(ctx,
+		`SELECT status, count(*) FROM requests WHERE autoservice_id = $1 GROUP BY status`, autoserviceID)
+	if err != nil {
+		return nil, err
+	}
+	counts := domain.RequestCounts{}
+	var status domain.RequestStatus
+	var n int
+	_, err = pgx.ForEachRow(rows, []any{&status, &n}, func() error {
+		counts[status] = n
+		return nil
+	})
+	return counts, err
+}
+
+func (r *RequestRepo) CountByClientStatus(ctx context.Context, autoserviceID, clientID uuid.UUID, status domain.RequestStatus) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT count(*) FROM requests WHERE autoservice_id = $1 AND client_id = $2 AND status = $3`,
+		autoserviceID, clientID, status).Scan(&n)
+	return n, err
+}
+
 func (r *RequestRepo) ListByClient(ctx context.Context, autoserviceID, clientID uuid.UUID) ([]domain.Request, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT `+requestColumns+` FROM requests r
@@ -158,12 +218,21 @@ func (r *RequestRepo) UpdateStatus(ctx context.Context, autoserviceID, id uuid.U
 
 func (r *RequestRepo) UpdateContent(ctx context.Context, autoserviceID, clientID, id uuid.UUID, in domain.RequestInput) (domain.Request, error) {
 	out, err := scanRequest(r.db.QueryRow(ctx,
-		`UPDATE requests r SET car_brand = $5, car_model = $6, description = $7, phone = $8, updated_at = now()
+		`UPDATE requests r SET
+			service_id = (SELECT s.id FROM services s WHERE s.id = $5::uuid AND s.autoservice_id = $1),
+			service_name = $6, answers = $7::jsonb, message = $8, phone = $9, updated_at = now()
 		 WHERE r.autoservice_id = $1 AND r.client_id = $2 AND r.id = $3 AND r.status = $4
 		 RETURNING `+requestColumns,
-		autoserviceID, clientID, id, domain.StatusNew, in.CarBrand, in.CarModel, in.Description, in.Phone))
+		autoserviceID, clientID, id, domain.StatusNew, in.ServiceID, in.ServiceName,
+		marshalAnswers(in.Answers), in.Message, in.Phone))
 	if errors.Is(err, domain.ErrNotFound) {
 		return domain.Request{}, domain.ErrRequestNotEditable
 	}
 	return out, err
+}
+
+func (r *RequestRepo) UpdateNote(ctx context.Context, autoserviceID, id uuid.UUID, note string) (domain.Request, error) {
+	return scanRequest(r.db.QueryRow(ctx,
+		`UPDATE requests r SET note = $3, updated_at = now()
+		 WHERE r.autoservice_id = $1 AND r.id = $2 RETURNING `+requestColumns, autoserviceID, id, note))
 }

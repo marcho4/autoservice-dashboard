@@ -50,6 +50,9 @@ var domainErrors = []struct {
 	{domain.ErrInvalidBotToken, http.StatusUnprocessableEntity, "invalid_bot_token"},
 	{domain.ErrInvalidTransition, http.StatusConflict, "invalid_transition"},
 	{domain.ErrRequestNotEditable, http.StatusConflict, "request_not_editable"},
+	{domain.ErrTooManyRequests, http.StatusTooManyRequests, "too_many_requests"},
+	{domain.ErrServiceLimit, http.StatusConflict, "service_limit"},
+	{domain.ErrServicesExist, http.StatusConflict, "services_exist"},
 }
 
 func writeDomainError(w http.ResponseWriter, r *http.Request, err error) {

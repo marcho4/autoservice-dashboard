@@ -25,10 +25,21 @@ type RevokedTokenRepository interface {
 }
 
 type AutoserviceRepository interface {
-	Create(ctx context.Context, a domain.Autoservice) (domain.Autoservice, error)
+	Create(ctx context.Context, a domain.Autoservice, services []domain.ServiceInput) (domain.Autoservice, error)
+	Get(ctx context.Context, id uuid.UUID) (domain.Autoservice, error)
 	GetByOwner(ctx context.Context, ownerID uuid.UUID) (domain.Autoservice, error)
 	Update(ctx context.Context, id uuid.UUID, in domain.AutoserviceInput) (domain.Autoservice, error)
 	Delete(ctx context.Context, id uuid.UUID) error
+}
+
+type ServiceRepository interface {
+	List(ctx context.Context, autoserviceID uuid.UUID, onlyActive bool) ([]domain.Service, error)
+	Get(ctx context.Context, autoserviceID, id uuid.UUID) (domain.Service, error)
+	Create(ctx context.Context, autoserviceID uuid.UUID, in domain.ServiceInput) (domain.Service, error)
+	CreateDefaults(ctx context.Context, autoserviceID uuid.UUID, services []domain.ServiceInput) error
+	Update(ctx context.Context, autoserviceID, id uuid.UUID, in domain.ServiceInput) (domain.Service, error)
+	Delete(ctx context.Context, autoserviceID, id uuid.UUID) error
+	Reorder(ctx context.Context, autoserviceID uuid.UUID, ids []uuid.UUID) error
 }
 
 type BotRepository interface {
@@ -37,6 +48,10 @@ type BotRepository interface {
 	GetByTelegramID(ctx context.Context, telegramBotID int64) (domain.Bot, error)
 	List(ctx context.Context) ([]domain.Bot, error)
 	Delete(ctx context.Context, autoserviceID uuid.UUID) error
+	SetStatus(ctx context.Context, autoserviceID uuid.UUID, token string, status domain.BotStatus, reason string) error
+	AddRecipient(ctx context.Context, autoserviceID uuid.UUID, code, newCode string, chatID int64, name string) error
+	ListRecipients(ctx context.Context, autoserviceID uuid.UUID) ([]domain.NotifyRecipient, error)
+	RemoveRecipient(ctx context.Context, autoserviceID uuid.UUID, chatID int64) error
 }
 
 type ClientRepository interface {
@@ -50,9 +65,12 @@ type RequestRepository interface {
 	Create(ctx context.Context, r domain.Request) (domain.Request, error)
 	Get(ctx context.Context, autoserviceID, id uuid.UUID) (domain.RequestWithClient, error)
 	List(ctx context.Context, autoserviceID uuid.UUID, f domain.RequestFilter) ([]domain.RequestWithClient, int, error)
+	Counts(ctx context.Context, autoserviceID uuid.UUID) (domain.RequestCounts, error)
+	CountByClientStatus(ctx context.Context, autoserviceID, clientID uuid.UUID, status domain.RequestStatus) (int, error)
 	ListByClient(ctx context.Context, autoserviceID, clientID uuid.UUID) ([]domain.Request, error)
 	UpdateStatus(ctx context.Context, autoserviceID, id uuid.UUID, from, to domain.RequestStatus) (domain.Request, error)
 	UpdateContent(ctx context.Context, autoserviceID, clientID, id uuid.UUID, in domain.RequestInput) (domain.Request, error)
+	UpdateNote(ctx context.Context, autoserviceID, id uuid.UUID, note string) (domain.Request, error)
 }
 
 type TelegramBotInfo struct {

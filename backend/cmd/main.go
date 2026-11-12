@@ -14,7 +14,9 @@ import (
 const usage = `Usage: app <command>
 
 Commands:
-  serve [spam]  start the HTTP API server; spam adds 150 goroutines for 15 minutes
+  serve [spam]  start the HTTP API server and the Telegram bot runner (BOT_RUNNER=false turns the runner off);
+                spam adds 150 goroutines for 15 minutes
+  bot           run only the Telegram bot runner
   migrate       apply pending database migrations
   probe         run the black-box prober and expose its metrics
 `
@@ -34,6 +36,8 @@ func main() {
 	case "serve":
 		spamGo := len(os.Args) > 2 && os.Args[2] == "spam"
 		err = serve(ctx, spamGo)
+	case "bot":
+		err = runBot(ctx)
 	case "migrate":
 		err = migrate(ctx)
 	case "probe":

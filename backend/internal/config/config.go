@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/marcho4/autoservice-dashboard/backend/internal/bot"
 )
 
 type Config struct {
@@ -16,10 +18,25 @@ type Config struct {
 	DatabaseURL     string
 	JWTSecret       string
 	JWTTTL          time.Duration
-	BotAPIKey       string
 	TelegramAPIURL  string
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
+
+	// BotAPIKey enables the internal HTTP API for external bot runners; empty keeps it off.
+	BotAPIKey string
+	// BotRunner starts the built-in Telegram bot runner inside the serve command.
+	BotRunner bool
+	// AppURL is the public address of the dashboard, used for links in Telegram notifications.
+	AppURL string
+
+	// The LLM is any OpenAI-compatible API. An empty LLMModel turns it off: clients then pick the service with buttons.
+	LLMBaseURL string
+	LLMAPIKey  string
+	LLMModel   string
+	LLMTimeout time.Duration
+
+	// Runner overrides the bot runner timings; the zero value means production defaults.
+	Runner bot.RunnerConfig
 
 	ProbeTargets  map[string]string
 	ProbeInterval time.Duration
@@ -42,15 +59,42 @@ func Load() (Config, error) {
 		DatabaseURL:     required("DATABASE_URL", &errs),
 		JWTSecret:       required("JWT_SECRET", &errs),
 		JWTTTL:          durationVar("JWT_TTL", 24*time.Hour, &errs),
-		BotAPIKey:       required("BOT_API_KEY", &errs),
 		TelegramAPIURL:  stringVar("TELEGRAM_API_URL", "https://api.telegram.org"),
 		ShutdownTimeout: durationVar("SHUTDOWN_TIMEOUT", 15*time.Second, &errs),
 		LogLevel:        logLevel(&errs),
+		BotAPIKey:       os.Getenv("BOT_API_KEY"),
+		BotRunner:       boolVar("BOT_RUNNER", true, &errs),
+		AppURL:          os.Getenv("APP_URL"),
 	}
 	if c.BotAPIKey != "" && len(c.BotAPIKey) < 16 {
 		errs = append(errs, errors.New("BOT_API_KEY must be at least 16 characters"))
 	}
+	loadBot(&c, &errs)
 	return c, errors.Join(errs...)
+}
+
+// LoadBot reads the configuration of the standalone bot runner (the "bot" command).
+func LoadBot() (Config, error) {
+	var errs []error
+	c := Config{
+		DatabaseURL:    required("DATABASE_URL", &errs),
+		TelegramAPIURL: stringVar("TELEGRAM_API_URL", "https://api.telegram.org"),
+		LogLevel:       logLevel(&errs),
+		BotRunner:      true,
+		AppURL:         os.Getenv("APP_URL"),
+	}
+	loadBot(&c, &errs)
+	return c, errors.Join(errs...)
+}
+
+func loadBot(c *Config, errs *[]error) {
+	c.LLMBaseURL = stringVar("LLM_BASE_URL", "https://api.openai.com/v1")
+	c.LLMAPIKey = os.Getenv("LLM_API_KEY")
+	c.LLMModel = os.Getenv("LLM_MODEL")
+	c.LLMTimeout = durationVar("LLM_TIMEOUT", 20*time.Second, errs)
+	if u, err := url.Parse(c.LLMBaseURL); err != nil || u.Host == "" {
+		*errs = append(*errs, errors.New("LLM_BASE_URL must be an absolute URL like https://api.openai.com/v1"))
+	}
 }
 
 func LoadProber() (Config, error) {
@@ -91,6 +135,18 @@ func intVar(name string, def int, errs *[]error) int {
 		*errs = append(*errs, fmt.Errorf("%s must be an integer", name))
 	}
 	return n
+}
+
+func boolVar(name string, def bool, errs *[]error) bool {
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("%s must be true or false", name))
+	}
+	return b
 }
 
 func durationVar(name string, def time.Duration, errs *[]error) time.Duration {

@@ -14,9 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/marcho4/autoservice-dashboard/backend/internal/app"
+	"github.com/marcho4/autoservice-dashboard/backend/internal/bot"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/config"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/gateway/postgres"
+	"github.com/marcho4/autoservice-dashboard/backend/internal/testkit"
 )
 
 const apiKey = "test-bot-runner-api-key"
@@ -27,24 +31,13 @@ var (
 	tokenC = "333333:" + strings.Repeat("c", 35)
 )
 
-func fakeTelegram() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/bot"), "/getMe")
-		bots := map[string]string{tokenA: "service_a_bot", tokenB: "service_b_bot", tokenC: "service_c_bot"}
-		username, ok := bots[token]
-		if !ok {
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"ok":false,"error_code":401,"description":"Unauthorized"}`)
-			return
-		}
-		id, _, _ := strings.Cut(token, ":")
-		fmt.Fprintf(w, `{"ok":true,"result":{"id":%s,"is_bot":true,"username":%q}}`, id, username)
-	}))
-}
-
 type api struct {
-	t   *testing.T
-	srv *httptest.Server
+	t    *testing.T
+	srv  *httptest.Server
+	tg   *testkit.Telegram
+	llm  *testkit.LLM
+	cfg  config.Config
+	pool *pgxpool.Pool
 }
 
 type resp struct {
@@ -120,13 +113,21 @@ func setup(t *testing.T) *api {
 		t.Fatal(err)
 	}
 
-	tg := fakeTelegram()
+	tg := testkit.NewTelegram()
 	t.Cleanup(tg.Close)
+	tg.AddBot(tokenA, "service_a_bot")
+	tg.AddBot(tokenB, "service_b_bot")
+	tg.AddBot(tokenC, "service_c_bot")
+	llm := testkit.NewLLM()
+	t.Cleanup(llm.Close)
 	cfg := config.Config{
 		JWTSecret:      strings.Repeat("s", 32),
 		JWTTTL:         time.Hour,
 		BotAPIKey:      apiKey,
-		TelegramAPIURL: tg.URL,
+		TelegramAPIURL: tg.URL(),
+		LLMBaseURL:     llm.URL(),
+		LLMModel:       "test-model",
+		Runner:         bot.RunnerConfig{ReconcileInterval: 30 * time.Millisecond, PollTimeout: time.Second},
 	}
 	router, err := app.NewRouter(cfg, pool, log)
 	if err != nil {
@@ -134,7 +135,7 @@ func setup(t *testing.T) *api {
 	}
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
-	return &api{t: t, srv: srv}
+	return &api{t: t, srv: srv, tg: tg, llm: llm, cfg: cfg, pool: pool}
 }
 
 func register(a *api, email string) string {
@@ -218,7 +219,9 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 	expect(t, r, 422, "token rejected by telegram")
 	r = a.do("PUT", "/api/v1/autoservice/bot", tokA, map[string]string{"token": tokenA})
 	expect(t, r, 200, "connect bot A")
-	if r.body["username"] != "service_a_bot" || r.body["masked_token"] != "111111:****aaaa" {
+	if r.body["username"] != "service_a_bot" || r.body["masked_token"] != "111111:****aaaa" ||
+		r.body["status"] != "pending" || r.body["link"] != "https://t.me/service_a_bot" ||
+		!strings.HasPrefix(r.body["notify_link"].(string), "https://t.me/service_a_bot?start=master_") {
 		t.Fatalf("unexpected bot view: %v", r.body)
 	}
 	if strings.Contains(fmt.Sprint(a.do("GET", "/api/v1/autoservice/bot", tokA, nil).body), tokenA) {
@@ -246,24 +249,32 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 
 	newReq := func(bot string, tgID int64, brand string) resp {
 		return a.runner("POST", "/bots/"+bot+"/requests", map[string]any{
-			"client":    map[string]any{"telegram_id": tgID, "telegram_username": "petya", "name": "Петя"},
-			"car_brand": brand, "car_model": "Camry", "description": "Стучит подвеска", "phone": "+7 900 111-22-33",
+			"client":       map[string]any{"telegram_id": tgID, "telegram_username": "petya", "name": "Петя"},
+			"service_name": "Диагностика",
+			"answers":      []map[string]string{{"label": "Автомобиль", "value": brand + " Camry"}, {"label": "Что случилось", "value": "Стучит подвеска"}},
+			"message":      "стучит подвеска на " + brand,
+			"phone":        "+7 900 111-22-33",
 		})
 	}
 	expect(t, newReq("111111", 0, "Toyota"), 400, "no telegram id")
 	expect(t, newReq("999999", 42, "Toyota"), 404, "unknown bot")
 	r1 := newReq("111111", 42, "Toyota")
 	expect(t, r1, 201, "create request 1")
-	if r1.body["status"] != "new" {
-		t.Fatalf("status %v", r1.body["status"])
+	if r1.body["status"] != "new" || r1.body["number"].(float64) != 1 || r1.body["phone"] != "+79001112233" {
+		t.Fatalf("unexpected request: %v", r1.body)
 	}
 	id1 := r1.body["id"].(string)
 	time.Sleep(10 * time.Millisecond)
 	r2 := newReq("111111", 42, "Lada")
 	expect(t, r2, 201, "create request 2")
 	id2 := r2.body["id"].(string)
-	expect(t, newReq("111111", 77, "BMW"), 201, "another client")
-	expect(t, newReq("222222", 42, "Kia"), 201, "same telegram user in autoservice B")
+	r3 := newReq("111111", 77, "BMW")
+	expect(t, r3, 201, "another client")
+	rb := newReq("222222", 42, "Kia")
+	expect(t, rb, 201, "same telegram user in autoservice B")
+	if r3.body["number"].(float64) != 3 || rb.body["number"].(float64) != 1 {
+		t.Fatalf("requests must be numbered per autoservice: A %v, B %v", r3.body["number"], rb.body["number"])
+	}
 
 	list := a.do("GET", "/api/v1/requests", tokA, nil)
 	expect(t, list, 200, "list A")
@@ -271,8 +282,12 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 		t.Fatalf("A should see 3 requests: %v", list.body)
 	}
 	first := list.body["items"].([]any)[0].(map[string]any)
-	if first["car_brand"] != "BMW" {
-		t.Fatalf("default sort must be newest first, got %v", first["car_brand"])
+	if first["number"].(float64) != 3 || first["service_name"] != "Диагностика" ||
+		first["answers"].([]any)[0].(map[string]any)["value"] != "BMW Camry" || first["message"] != "стучит подвеска на BMW" {
+		t.Fatalf("default sort must be newest first, got %v", first)
+	}
+	if counts := list.body["counts"].(map[string]any); counts["new"].(float64) != 3 || counts["closed"].(float64) != 0 {
+		t.Fatalf("unexpected counts: %v", counts)
 	}
 	asc := a.do("GET", "/api/v1/requests?sort=asc", tokA, nil)
 	if asc.body["items"].([]any)[0].(map[string]any)["id"] != id1 {
@@ -284,7 +299,7 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 	full := a.do("GET", "/api/v1/requests/"+id1, tokA, nil)
 	expect(t, full, 200, "get request")
 	client := full.body["client"].(map[string]any)
-	if client["name"] != "Петя" || client["phone"] != "+7 900 111-22-33" {
+	if client["name"] != "Петя" || client["phone"] != "+79001112233" {
 		t.Fatalf("client contacts missing: %v", client)
 	}
 
@@ -308,12 +323,14 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 	expect(t, a.runner("GET", "/bots/111111/clients/77/requests/"+id1, nil), 404, "other client's request")
 	empty := a.runner("GET", "/bots/111111/clients/5555/requests", nil)
 	expect(t, empty, 200, "unknown client has no requests")
-	edit := map[string]string{"car_brand": "Toyota", "car_model": "Corolla", "description": "Не заводится", "phone": "+79001112233"}
+	edit := map[string]any{"service_name": "Ремонт", "answers": []map[string]string{{"label": "Автомобиль", "value": "Toyota Corolla"}}, "phone": "8 900 111-22-33"}
 	r = a.runner("PATCH", "/bots/111111/clients/42/requests/"+id1, edit)
 	expect(t, r, 200, "client edits new request")
-	if r.body["car_model"] != "Corolla" {
+	if r.body["service_name"] != "Ремонт" || len(r.body["answers"].([]any)) != 1 || r.body["phone"] != "+79001112233" {
 		t.Fatalf("not edited: %v", r.body)
 	}
+	expect(t, a.runner("POST", "/bots/111111/requests", map[string]any{
+		"client": map[string]any{"telegram_id": 42}, "service_name": "Ремонт", "phone": "не скажу"}), 400, "bad phone")
 	expect(t, a.runner("POST", "/bots/111111/clients/42/requests/"+id2+"/cancel", nil), 200, "client cancels")
 	expect(t, a.runner("POST", "/bots/111111/clients/42/requests/"+id2+"/cancel", nil), 409, "cancel twice")
 
@@ -331,8 +348,24 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 	expect(t, a.do("PATCH", "/api/v1/requests/"+id1+"/status", tokA, map[string]string{"status": "closed"}), 200, "close")
 
 	st := a.do("GET", "/api/v1/requests?status=closed", tokA, nil)
-	if st.body["total"].(float64) != 1 {
+	if st.body["total"].(float64) != 1 || st.body["counts"].(map[string]any)["cancelled"].(float64) != 1 {
 		t.Fatalf("status filter: %v", st.body)
+	}
+
+	r = a.do("PUT", "/api/v1/requests/"+id1+"/note", tokA, map[string]string{"note": " Перезвонить после 18:00 "})
+	expect(t, r, 200, "save note")
+	if r.body["note"] != "Перезвонить после 18:00" || r.body["status"] != "closed" {
+		t.Fatalf("note not saved: %v", r.body)
+	}
+	expect(t, a.do("PUT", "/api/v1/requests/"+id1+"/note", tokB, map[string]string{"note": "x"}), 404, "B cannot annotate A's request")
+
+	for i := range 5 {
+		expect(t, newReq("222222", 500, "Kia"), 201, fmt.Sprintf("open request %d", i+1))
+	}
+	r = newReq("222222", 500, "Kia")
+	expect(t, r, 429, "too many open requests of one client")
+	if errCode(r) != "too_many_requests" {
+		t.Fatalf("code %s", errCode(r))
 	}
 
 	expect(t, a.do("DELETE", "/api/v1/autoservice/bot", tokB, nil), 204, "disconnect B bot")
@@ -349,5 +382,145 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 	cls := a.do("GET", "/api/v1/clients", tokA, nil)
 	if cls.body["total"].(float64) != 0 {
 		t.Fatalf("old clients must be deleted: %v", cls.body)
+	}
+}
+
+func items(r resp) []map[string]any {
+	raw, _ := r.body["items"].([]any)
+	out := make([]map[string]any, len(raw))
+	for i, v := range raw {
+		out[i] = v.(map[string]any)
+	}
+	return out
+}
+
+func names(list []map[string]any) string {
+	var out []string
+	for _, s := range list {
+		out = append(out, s["name"].(string))
+	}
+	return strings.Join(out, ", ")
+}
+
+func TestServiceCatalogFlow(t *testing.T) {
+	a := setup(t)
+
+	// Registration with an autoservice name creates the autoservice and its starter catalog in one step.
+	r := a.do("POST", "/api/v1/auth/register", "", map[string]string{
+		"email": "owner@example.com", "password": "password123", "full_name": "Иван", "autoservice_name": "Гараж №1"})
+	expect(t, r, 201, "register with autoservice")
+	tok := r.body["access_token"].(string)
+	as := a.do("GET", "/api/v1/autoservice", tok, nil)
+	expect(t, as, 200, "autoservice created on registration")
+	if as.body["name"] != "Гараж №1" {
+		t.Fatalf("unexpected autoservice: %v", as.body)
+	}
+	expect(t, a.do("POST", "/api/v1/auth/register", "", map[string]string{
+		"email": "bad@example.com", "password": "password123", "full_name": "x", "autoservice_name": strings.Repeat("я", 201)}), 400, "bad autoservice name")
+	expect(t, a.do("POST", "/api/v1/auth/login", "", map[string]string{"email": "bad@example.com", "password": "password123"}), 401,
+		"a rejected registration must not leave an account behind")
+
+	list := a.do("GET", "/api/v1/services", tok, nil)
+	expect(t, list, 200, "list services")
+	defaults := items(list)
+	if got := names(defaults); got != "Диагностика, Техобслуживание и замена масла, Ремонт, Шиномонтаж, Другой вопрос" {
+		t.Fatalf("unexpected starter catalog: %s", got)
+	}
+	field := defaults[0]["fields"].([]any)[0].(map[string]any)
+	if field["label"] != "Автомобиль" || field["type"] != "text" || field["required"] != true || field["id"] == "" {
+		t.Fatalf("unexpected field: %v", field)
+	}
+	r = a.do("POST", "/api/v1/services/defaults", tok, nil)
+	expect(t, r, 409, "defaults only for an empty catalog")
+	if errCode(r) != "services_exist" {
+		t.Fatalf("code %s", errCode(r))
+	}
+
+	expect(t, a.do("POST", "/api/v1/services", tok, map[string]any{"name": ""}), 400, "empty name")
+	r = a.do("POST", "/api/v1/services", tok, map[string]any{"name": "x", "fields": []map[string]any{{"label": "a", "type": "date"}}})
+	expect(t, r, 400, "unknown field type")
+	if e := r.body["error"].(map[string]any); e["field"] != "fields[0]" {
+		t.Fatalf("validation error must point at the field: %v", e)
+	}
+
+	r = a.do("POST", "/api/v1/services", tok, map[string]any{
+		"name": "Автомойка", "description": "Мойка кузова и салона",
+		"fields": []map[string]any{
+			{"label": "Тип мойки", "question": "Какая мойка нужна?", "type": "choice", "required": true, "options": []string{"Кузов", "Комплекс"}},
+			{"label": "Комментарий", "type": "text"},
+		}})
+	expect(t, r, 201, "create service")
+	wash := r.body
+	washID := wash["id"].(string)
+	fields := wash["fields"].([]any)
+	if wash["is_active"] != true || len(fields) != 2 || fields[0].(map[string]any)["id"] == fields[1].(map[string]any)["id"] {
+		t.Fatalf("unexpected service: %v", wash)
+	}
+	choiceID := fields[0].(map[string]any)["id"]
+
+	// Updating keeps the IDs of existing fields, so half-filled bot dialogs stay valid.
+	r = a.do("PUT", "/api/v1/services/"+washID, tok, map[string]any{
+		"name": "Мойка", "is_active": false,
+		"fields": []map[string]any{
+			{"id": choiceID, "label": "Вид мойки", "type": "choice", "required": true, "options": []string{"Кузов", "Комплекс", "Двигатель"}},
+		}})
+	expect(t, r, 200, "update service")
+	updated := r.body["fields"].([]any)
+	if r.body["name"] != "Мойка" || r.body["is_active"] != false || len(updated) != 1 || updated[0].(map[string]any)["id"] != choiceID {
+		t.Fatalf("unexpected update: %v", r.body)
+	}
+
+	order := []string{washID, defaults[4]["id"].(string)}
+	r = a.do("PUT", "/api/v1/services/order", tok, map[string]any{"ids": order})
+	expect(t, r, 200, "reorder")
+	if got := names(items(r)); got != "Мойка, Другой вопрос, Диагностика, Техобслуживание и замена масла, Ремонт, Шиномонтаж" {
+		t.Fatalf("unexpected order: %s", got)
+	}
+
+	other := register(a, "other@example.com")
+	expect(t, a.do("POST", "/api/v1/autoservice", other, map[string]string{"name": "Чужой"}), 201, "second autoservice")
+	expect(t, a.do("PUT", "/api/v1/services/"+washID, other, map[string]any{"name": "Взлом"}), 404, "foreign service is invisible")
+	expect(t, a.do("DELETE", "/api/v1/services/"+washID, other, nil), 404, "foreign service cannot be deleted")
+	if got := len(items(a.do("GET", "/api/v1/services", other, nil))); got != 5 {
+		t.Fatalf("every autoservice gets its own starter catalog, got %d services", got)
+	}
+
+	expect(t, a.do("DELETE", "/api/v1/services/"+washID, tok, nil), 204, "delete service")
+	expect(t, a.do("DELETE", "/api/v1/services/"+washID, tok, nil), 404, "delete twice")
+	for _, s := range defaults {
+		expect(t, a.do("DELETE", "/api/v1/services/"+s["id"].(string), tok, nil), 204, "delete default")
+	}
+	r = a.do("POST", "/api/v1/services/defaults", tok, nil)
+	expect(t, r, 201, "restore defaults into an empty catalog")
+	if len(items(r)) != 5 {
+		t.Fatalf("defaults not restored: %v", r.body)
+	}
+
+	for i := len(items(r)); i < 30; i++ {
+		expect(t, a.do("POST", "/api/v1/services", tok, map[string]any{"name": fmt.Sprintf("Услуга %d", i)}), 201, "fill the catalog")
+	}
+	r = a.do("POST", "/api/v1/services", tok, map[string]any{"name": "Лишняя"})
+	expect(t, r, 409, "catalog size limit")
+	if errCode(r) != "service_limit" {
+		t.Fatalf("code %s", errCode(r))
+	}
+}
+
+func TestInternalAPIIsOffWithoutKey(t *testing.T) {
+	a := setup(t)
+	a.cfg.BotAPIKey = ""
+	router, err := app.NewRouter(a.cfg, a.pool, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+	res, err := http.Get(srv.URL + "/internal/v1/bots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("internal API must not be mounted without BOT_API_KEY, got %d", res.StatusCode)
 	}
 }

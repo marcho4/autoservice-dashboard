@@ -3,20 +3,25 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/usecases"
 )
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		FullName string `json:"full_name"`
+		Email           string `json:"email"`
+		Password        string `json:"password"`
+		FullName        string `json:"full_name"`
+		AutoserviceName string `json:"autoservice_name"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	s, err := h.auth.Register(r.Context(), usecases.RegisterInput{Email: body.Email, Password: body.Password, FullName: body.FullName})
+	s, err := h.auth.Register(r.Context(), usecases.RegisterInput{
+		Email: body.Email, Password: body.Password, FullName: body.FullName, AutoserviceName: body.AutoserviceName,
+	})
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
@@ -157,12 +162,98 @@ func (h *Handler) connectBot(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	bot, err := h.autoservices.ConnectBot(r.Context(), principal(r).Employee.ID, body.Token)
+	if _, err := h.autoservices.ConnectBot(r.Context(), principal(r).Employee.ID, body.Token); err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	h.getBot(w, r)
+}
+
+func (h *Handler) removeRecipient(w http.ResponseWriter, r *http.Request) {
+	chatID, ok := int64Param(w, r, "chatID")
+	if !ok {
+		return
+	}
+	if err := h.autoservices.RemoveRecipient(r.Context(), principal(r).Employee.ID, chatID); err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) listServices(w http.ResponseWriter, r *http.Request) {
+	items, err := h.catalog.List(r.Context(), principal(r).Employee.ID)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toBot(bot))
+	writeJSON(w, http.StatusOK, listDTO[serviceDTO]{Items: mapAll(items, toService), Total: len(items)})
+}
+
+func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
+	var body serviceInputDTO
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	s, err := h.catalog.Create(r.Context(), principal(r).Employee.ID, body.toDomain())
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toService(s))
+}
+
+func (h *Handler) createDefaultServices(w http.ResponseWriter, r *http.Request) {
+	items, err := h.catalog.CreateDefaults(r.Context(), principal(r).Employee.ID)
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, listDTO[serviceDTO]{Items: mapAll(items, toService), Total: len(items)})
+}
+
+func (h *Handler) updateService(w http.ResponseWriter, r *http.Request) {
+	id, ok := uuidParam(w, r, "id")
+	if !ok {
+		return
+	}
+	var body serviceInputDTO
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	s, err := h.catalog.Update(r.Context(), principal(r).Employee.ID, id, body.toDomain())
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toService(s))
+}
+
+func (h *Handler) deleteService(w http.ResponseWriter, r *http.Request) {
+	id, ok := uuidParam(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := h.catalog.Delete(r.Context(), principal(r).Employee.ID, id); err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) reorderServices(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []uuid.UUID `json:"ids"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	items, err := h.catalog.Reorder(r.Context(), principal(r).Employee.ID, body.IDs)
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, listDTO[serviceDTO]{Items: mapAll(items, toService), Total: len(items)})
 }
 
 func (h *Handler) disconnectBot(w http.ResponseWriter, r *http.Request) {
@@ -178,12 +269,12 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, total, err := h.dashboard.ListRequests(r.Context(), principal(r).Employee.ID, f)
+	page, err := h.dashboard.ListRequests(r.Context(), principal(r).Employee.ID, f)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, listDTO[requestWithClientDTO]{Items: mapAll(items, toRequestWithClient), Total: total})
+	writeJSON(w, http.StatusOK, toRequestPage(page))
 }
 
 func parseRequestFilter(w http.ResponseWriter, r *http.Request) (domain.RequestFilter, bool) {
@@ -252,6 +343,25 @@ func (h *Handler) setStatus(w http.ResponseWriter, r *http.Request, status domai
 		return
 	}
 	req, err := h.dashboard.ChangeStatus(r.Context(), principal(r).Employee.ID, id, status)
+	if err != nil {
+		writeDomainError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRequestWithClient(req))
+}
+
+func (h *Handler) updateNote(w http.ResponseWriter, r *http.Request) {
+	id, ok := uuidParam(w, r, "id")
+	if !ok {
+		return
+	}
+	var body struct {
+		Note string `json:"note"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	req, err := h.dashboard.UpdateNote(r.Context(), principal(r).Employee.ID, id, body.Note)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return

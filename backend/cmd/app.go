@@ -63,6 +63,23 @@ func serve(ctx context.Context, spamGo bool) error {
 		return err
 	}
 
+	// The bot runner lives next to the API by default: one container is the whole product.
+	// With several replicas only the one holding the leader lock polls Telegram.
+	botCtx, stopBot := context.WithCancel(ctx)
+	botDone := make(chan struct{})
+	if cfg.BotRunner {
+		go func() {
+			defer close(botDone)
+			_ = app.NewBotRunner(cfg, pool, log).Run(botCtx)
+		}()
+	} else {
+		close(botDone)
+	}
+	defer func() {
+		stopBot()
+		<-botDone
+	}()
+
 	srv := &http.Server{
 		Addr:              ":" + strconv.Itoa(cfg.HTTPPort),
 		Handler:           router,
@@ -72,6 +89,23 @@ func serve(ctx context.Context, spamGo bool) error {
 		IdleTimeout:       120 * time.Second,
 	}
 	return runServer(ctx, srv, cfg.ShutdownTimeout, log)
+}
+
+// runBot runs only the Telegram bot runner, for deployments that keep it apart from the API.
+func runBot(ctx context.Context) error {
+	cfg, err := config.LoadBot()
+	if err != nil {
+		return err
+	}
+	log := logger.SetupLogging("autoservice-bot")
+
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	return app.NewBotRunner(cfg, pool, log).Run(ctx)
 }
 
 func runServer(ctx context.Context, srv *http.Server, shutdownTimeout time.Duration, log *slog.Logger) error {

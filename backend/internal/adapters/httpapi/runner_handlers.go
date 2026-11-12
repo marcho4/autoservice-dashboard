@@ -1,10 +1,36 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/google/uuid"
 )
+
+// The internal API lets an external integration act as a bot of an autoservice.
+// The built-in Telegram bot does not use it; it is mounted only when BOT_API_KEY is set.
+
+type botAutoserviceKey struct{}
+
+// resolveBot maps the {botID} path parameter to the autoservice of that bot.
+func (h *Handler) resolveBot(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		botID, ok := int64Param(w, r, "botID")
+		if !ok {
+			return
+		}
+		autoserviceID, err := h.botRunner.ResolveBot(r.Context(), botID)
+		if err != nil {
+			writeDomainError(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), botAutoserviceKey{}, autoserviceID)))
+	})
+}
+
+func botAutoservice(r *http.Request) uuid.UUID {
+	return r.Context().Value(botAutoserviceKey{}).(uuid.UUID)
+}
 
 func (h *Handler) runnerListBots(w http.ResponseWriter, r *http.Request) {
 	bots, err := h.botRunner.ListBots(r.Context())
@@ -16,10 +42,6 @@ func (h *Handler) runnerListBots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) runnerCreateRequest(w http.ResponseWriter, r *http.Request) {
-	botID, ok := int64Param(w, r, "botID")
-	if !ok {
-		return
-	}
 	var body struct {
 		Client clientIdentityDTO `json:"client"`
 		requestInputDTO
@@ -27,7 +49,7 @@ func (h *Handler) runnerCreateRequest(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	req, err := h.botRunner.CreateRequest(r.Context(), botID, body.Client.toDomain(), body.requestInputDTO.toDomain())
+	req, err := h.botRunner.CreateRequest(r.Context(), botAutoservice(r), body.Client.toDomain(), body.requestInputDTO.toDomain())
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
@@ -36,11 +58,11 @@ func (h *Handler) runnerCreateRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) runnerListRequests(w http.ResponseWriter, r *http.Request) {
-	botID, telegramID, ok := clientParams(w, r)
+	telegramID, ok := int64Param(w, r, "telegramID")
 	if !ok {
 		return
 	}
-	requests, err := h.botRunner.ListClientRequests(r.Context(), botID, telegramID)
+	requests, err := h.botRunner.ListClientRequests(r.Context(), botAutoservice(r), telegramID)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
@@ -49,11 +71,11 @@ func (h *Handler) runnerListRequests(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) runnerGetRequest(w http.ResponseWriter, r *http.Request) {
-	botID, telegramID, requestID, ok := clientRequestParams(w, r)
+	telegramID, requestID, ok := clientRequestParams(w, r)
 	if !ok {
 		return
 	}
-	req, err := h.botRunner.GetClientRequest(r.Context(), botID, telegramID, requestID)
+	req, err := h.botRunner.GetClientRequest(r.Context(), botAutoservice(r), telegramID, requestID)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
@@ -62,7 +84,7 @@ func (h *Handler) runnerGetRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) runnerUpdateRequest(w http.ResponseWriter, r *http.Request) {
-	botID, telegramID, requestID, ok := clientRequestParams(w, r)
+	telegramID, requestID, ok := clientRequestParams(w, r)
 	if !ok {
 		return
 	}
@@ -70,7 +92,7 @@ func (h *Handler) runnerUpdateRequest(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	req, err := h.botRunner.UpdateClientRequest(r.Context(), botID, telegramID, requestID, body.toDomain())
+	req, err := h.botRunner.UpdateClientRequest(r.Context(), botAutoservice(r), telegramID, requestID, body.toDomain())
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
@@ -79,11 +101,11 @@ func (h *Handler) runnerUpdateRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) runnerCancelRequest(w http.ResponseWriter, r *http.Request) {
-	botID, telegramID, requestID, ok := clientRequestParams(w, r)
+	telegramID, requestID, ok := clientRequestParams(w, r)
 	if !ok {
 		return
 	}
-	req, err := h.botRunner.CancelClientRequest(r.Context(), botID, telegramID, requestID)
+	req, err := h.botRunner.CancelClientRequest(r.Context(), botAutoservice(r), telegramID, requestID)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
@@ -91,20 +113,11 @@ func (h *Handler) runnerCancelRequest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toRequest(req))
 }
 
-func clientParams(w http.ResponseWriter, r *http.Request) (botID, telegramID int64, ok bool) {
-	botID, ok = int64Param(w, r, "botID")
-	if !ok {
-		return 0, 0, false
-	}
+func clientRequestParams(w http.ResponseWriter, r *http.Request) (telegramID int64, requestID uuid.UUID, ok bool) {
 	telegramID, ok = int64Param(w, r, "telegramID")
-	return botID, telegramID, ok
-}
-
-func clientRequestParams(w http.ResponseWriter, r *http.Request) (botID, telegramID int64, requestID uuid.UUID, ok bool) {
-	botID, telegramID, ok = clientParams(w, r)
 	if !ok {
-		return 0, 0, uuid.Nil, false
+		return 0, uuid.Nil, false
 	}
 	requestID, ok = uuidParam(w, r, "id")
-	return botID, telegramID, requestID, ok
+	return telegramID, requestID, ok
 }

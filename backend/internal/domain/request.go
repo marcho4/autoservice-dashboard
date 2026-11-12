@@ -1,8 +1,10 @@
 package domain
 
 import (
+	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -16,6 +18,9 @@ const (
 	StatusRejected   RequestStatus = "rejected"
 	StatusCancelled  RequestStatus = "cancelled"
 )
+
+// MaxOpenRequestsPerClient caps unprocessed requests of one Telegram user, so the bot cannot be used to flood the CRM.
+const MaxOpenRequestsPerClient = 5
 
 func ParseRequestStatus(s string) (RequestStatus, error) {
 	switch st := RequestStatus(s); st {
@@ -48,15 +53,25 @@ func CanTransition(from, to RequestStatus, actor Actor) bool {
 	return ok && allowedActor == actor
 }
 
+// Answer is a filled form field. Requests keep a snapshot of labels,
+// so editing or deleting a service later does not change old requests.
+type Answer struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
 type Request struct {
 	ID            uuid.UUID
 	AutoserviceID uuid.UUID
 	ClientID      uuid.UUID
+	Number        int
 	Status        RequestStatus
-	CarBrand      string
-	CarModel      string
-	Description   string
+	ServiceID     *uuid.UUID
+	ServiceName   string
+	Answers       []Answer
+	Message       string
 	Phone         string
+	Note          string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -71,23 +86,56 @@ type RequestWithClient struct {
 }
 
 type RequestInput struct {
-	CarBrand    string
-	CarModel    string
-	Description string
+	ServiceID   *uuid.UUID
+	ServiceName string
+	Answers     []Answer
+	Message     string
 	Phone       string
 }
 
+const (
+	maxAnswers       = 30
+	maxAnswerLabel   = 100
+	maxAnswerValue   = 1000
+	maxClientMessage = 4000
+	maxNoteLength    = 4000
+)
+
 func (in RequestInput) Normalize() (RequestInput, error) {
-	in.CarBrand = strings.TrimSpace(in.CarBrand)
-	in.CarModel = strings.TrimSpace(in.CarModel)
-	in.Description = strings.TrimSpace(in.Description)
-	in.Phone = strings.TrimSpace(in.Phone)
-	return in, firstError(
-		validateRequiredText("car_brand", in.CarBrand, 100),
-		validateRequiredText("car_model", in.CarModel, 100),
-		validateRequiredText("description", in.Description, 4000),
-		validatePhone(in.Phone),
-	)
+	in.ServiceName = strings.TrimSpace(in.ServiceName)
+	in.Message = strings.TrimSpace(in.Message)
+	if err := firstError(
+		validateRequiredText("service_name", in.ServiceName, maxNameLength),
+		validateOptionalText("message", in.Message, maxClientMessage),
+	); err != nil {
+		return in, err
+	}
+	if len(in.Answers) > maxAnswers {
+		return in, invalid("answers", fmt.Sprintf("must have at most %d items", maxAnswers))
+	}
+	answers := make([]Answer, 0, len(in.Answers))
+	for i, a := range in.Answers {
+		a.Label, a.Value = strings.TrimSpace(a.Label), strings.TrimSpace(a.Value)
+		if a.Value == "" {
+			continue
+		}
+		if a.Label == "" || utf8.RuneCountInString(a.Label) > maxAnswerLabel || utf8.RuneCountInString(a.Value) > maxAnswerValue {
+			return in, invalid(fmt.Sprintf("answers[%d]", i), "label must be 1-100 characters and value at most 1000")
+		}
+		answers = append(answers, a)
+	}
+	in.Answers = answers
+	phone, err := NormalizePhone(in.Phone)
+	if err != nil {
+		return in, err
+	}
+	in.Phone = phone
+	return in, nil
+}
+
+func NormalizeNote(note string) (string, error) {
+	note = strings.TrimSpace(note)
+	return note, validateOptionalText("note", note, maxNoteLength)
 }
 
 type SortOrder string
@@ -103,3 +151,5 @@ type RequestFilter struct {
 	Limit  int
 	Offset int
 }
+
+type RequestCounts map[RequestStatus]int
