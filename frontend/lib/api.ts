@@ -18,13 +18,46 @@ export type Autoservice = {
   updated_at: string;
 };
 
+export type BotStatus = "pending" | "running" | "error";
+
+export type NotifyRecipient = { chat_id: number; name: string; created_at: string };
+
 export type Bot = {
   username: string;
   telegram_bot_id: number;
   masked_token: string;
+  link: string;
+  status: BotStatus;
+  status_error: string;
+  status_at: string;
+  notify_link: string;
+  recipients: NotifyRecipient[];
   connected_at: string;
   updated_at: string;
 };
+
+export type FieldType = "text" | "number" | "choice";
+
+export type FormField = {
+  id: string;
+  label: string;
+  question: string;
+  type: FieldType;
+  required: boolean;
+  options: string[];
+};
+
+export type Service = {
+  id: string;
+  name: string;
+  description: string;
+  is_active: boolean;
+  fields: FormField[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ServiceInput = Pick<Service, "name" | "description" | "is_active" | "fields">;
 
 export type Client = {
   id: string;
@@ -37,18 +70,25 @@ export type Client = {
 
 export type ClientSummary = Client & { requests_count: number; last_request_at: string | null };
 
+export type Answer = { label: string; value: string };
+
 export type ServiceRequest = {
   id: string;
+  number: number;
   status: RequestStatus;
-  car_brand: string;
-  car_model: string;
-  description: string;
+  service_id: string | null;
+  service_name: string;
+  answers: Answer[];
+  message: string;
   phone: string;
+  note: string;
   created_at: string;
   updated_at: string;
 };
 
 export type RequestWithClient = ServiceRequest & { client: Client };
+
+export type RequestPage = { items: RequestWithClient[]; total: number; counts: Record<RequestStatus, number> };
 
 export type List<T> = { items: T[]; total: number };
 
@@ -73,6 +113,8 @@ const MESSAGES: Record<string, string> = {
   invalid_bot_token: "Telegram отклонил токен — проверьте его в @BotFather",
   invalid_transition: "Такой переход статуса недопустим",
   request_not_editable: "Заявку уже нельзя изменить",
+  service_limit: "Достигнут лимит: не больше 30 услуг",
+  services_exist: "Стандартные услуги можно добавить только в пустой список",
   not_found: "Не найдено",
   backend_unavailable: "Сервер недоступен, попробуйте позже",
   internal: "Внутренняя ошибка сервера",
@@ -87,13 +129,43 @@ const FIELDS: Record<string, string> = {
   phone: "Телефон",
   description: "Описание",
   token: "Токен",
+  autoservice_name: "Название автосервиса",
+  note: "Заметка",
 };
+
+const REASONS: [RegExp, string][] = [
+  [/^must be 1-(\d+) characters$/, "от 1 до $1 символов"],
+  [/^must be at most (\d+) characters$/, "не длиннее $1 символов"],
+  [/^must be at least (\d+) characters$/, "не короче $1 символов"],
+  [/^must be a valid email address$/, "укажите настоящий адрес"],
+  [/^must be a valid phone number$/, "укажите номер в формате +7 900 000-00-00"],
+  [/^has invalid format.*$/, "неверный формат, ожидается 123456789:AAH…"],
+  [/^label must be 1-(\d+) characters$/, "название поля — от 1 до $1 символов"],
+  [/^question must be at most (\d+) characters$/, "вопрос не длиннее $1 символов"],
+  [/^option must be at most (\d+) characters$/, "вариант не длиннее $1 символов"],
+  [/^choice must have 2-(\d+) options$/, "нужно от 2 до $1 вариантов ответа"],
+  [/^must have at most (\d+) items$/, "не больше $1"],
+];
+
+function reasonText(reason: string): string {
+  for (const [re, text] of REASONS) {
+    if (re.test(reason)) return reason.replace(re, text);
+  }
+  return reason;
+}
+
+function fieldName(field: string): string {
+  const m = /^fields\[(\d+)\]$/.exec(field);
+  if (m) return `Поле №${Number(m[1]) + 1}`;
+  if (field === "fields") return "Поля формы";
+  return FIELDS[field] ?? field;
+}
 
 export function errorText(e: unknown): string {
   if (e instanceof ApiError) {
     if (e.code === "validation_error" && e.field) {
       const reason = e.message.split(": ").slice(1).join(": ");
-      return `${FIELDS[e.field] ?? e.field}: ${reason}`;
+      return `${fieldName(e.field)}: ${reasonText(reason)}`;
     }
     return MESSAGES[e.code] ?? e.message;
   }
@@ -130,8 +202,8 @@ export const api = {
 
   login: (email: string, password: string) =>
     request<{ employee: Employee }>("/api/session", "POST", { email, password }),
-  register: (email: string, password: string, full_name: string) =>
-    request<{ employee: Employee }>("/api/session?register=1", "POST", { email, password, full_name }),
+  register: (email: string, password: string, full_name: string, autoservice_name: string) =>
+    request<{ employee: Employee }>("/api/session?register=1", "POST", { email, password, full_name, autoservice_name }),
   logout: () => request<void>("/api/session", "DELETE"),
 };
 
@@ -152,3 +224,27 @@ export function formatDate(iso: string): string {
     minute: "2-digit",
   });
 }
+
+export function formatPhone(phone: string): string {
+  const m = /^\+7(\d{3})(\d{3})(\d{2})(\d{2})$/.exec(phone);
+  return m ? `+7 ${m[1]} ${m[2]}-${m[3]}-${m[4]}` : phone;
+}
+
+export function telHref(phone: string): string {
+  return `tel:${phone.replace(/[^+\d]/g, "")}`;
+}
+
+export function clientName(c: Client): string {
+  return c.name || (c.telegram_username ? `@${c.telegram_username}` : `ID ${c.telegram_id}`);
+}
+
+// One-line digest of the answered form for tables and lists.
+export function answersDigest(r: ServiceRequest): string {
+  return r.answers.map((a) => a.value).join(" · ") || r.message;
+}
+
+export const BOT_ERRORS: Record<string, string> = {
+  unauthorized: "Telegram не принимает токен — возможно, его перевыпустили в @BotFather. Вставьте новый токен.",
+  conflict: "Сообщения этого бота уже получает другая программа. Отключите её или создайте для заявок отдельного бота.",
+  unavailable: "Нет связи с Telegram. Бот заработает сам, как только связь восстановится.",
+};

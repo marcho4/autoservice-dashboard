@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Alert, Card, Loading, PageTitle, StatusBadge } from "@/components/ui";
-import { api, Client, errorText, formatDate, ServiceRequest } from "@/lib/api";
+import { answersDigest, api, Client, errorText, formatDate, formatPhone, ServiceRequest } from "@/lib/api";
 
 type ClientDetails = Client & { requests: ServiceRequest[] };
 
@@ -31,7 +31,7 @@ export default function ClientPage() {
           <dl className="space-y-3 text-sm">
             <div>
               <dt className="text-zinc-500">Телефон</dt>
-              <dd className="font-medium">{client.phone || "—"}</dd>
+              <dd className="font-medium">{client.phone ? formatPhone(client.phone) : "—"}</dd>
             </div>
             <div>
               <dt className="text-zinc-500">Telegram</dt>
@@ -52,9 +52,9 @@ export default function ClientPage() {
                   <Link href={`/requests/${r.id}`} className="flex items-center justify-between gap-4 py-3 hover:bg-zinc-50">
                     <div className="min-w-0">
                       <div className="font-medium">
-                        {r.car_brand} {r.car_model}
+                        №{r.number} · {r.service_name}
                       </div>
-                      <div className="truncate text-sm text-zinc-600">{r.description}</div>
+                      <div className="truncate text-sm text-zinc-600">{answersDigest(r)}</div>
                       <div className="text-xs text-zinc-500">{formatDate(r.created_at)}</div>
                     </div>
                     <StatusBadge status={r.status} />

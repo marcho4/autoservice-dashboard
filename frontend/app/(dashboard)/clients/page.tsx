@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import NoAutoservice from "@/components/NoAutoservice";
 import { Alert, Loading, PageTitle } from "@/components/ui";
-import { api, ApiError, ClientSummary, errorText, formatDate, List } from "@/lib/api";
+import { api, ApiError, ClientSummary, errorText, formatDate, formatPhone, List } from "@/lib/api";
 
 export default function ClientsPage() {
   const [data, setData] = useState<List<ClientSummary> | null>(null);
@@ -56,7 +56,7 @@ export default function ClientsPage() {
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-zinc-700">{c.telegram_username ? `@${c.telegram_username}` : c.telegram_id}</td>
-                  <td className="whitespace-nowrap px-4 py-3">{c.phone || "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-3">{c.phone ? formatPhone(c.phone) : "—"}</td>
                   <td className="px-4 py-3">{c.requests_count}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-zinc-600">{c.last_request_at ? formatDate(c.last_request_at) : "—"}</td>
                 </tr>

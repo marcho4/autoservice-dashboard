@@ -2,8 +2,11 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import ConfirmButton from "@/components/ConfirmButton";
+import { BotStatusBadge, botErrorText } from "@/components/BotStatus";
+import BotTokenForm from "@/components/BotTokenForm";
 import { Alert, Button, Card, Field, Loading, PageTitle, TextArea } from "@/components/ui";
-import { api, ApiError, Autoservice, Bot, errorText, formatDate } from "@/lib/api";
+import { api, ApiError, Autoservice, errorText, formatDate } from "@/lib/api";
+import { useBot } from "@/lib/useBot";
 
 type Status = { kind: "error" | "success"; text: string } | null;
 
@@ -39,7 +42,7 @@ export default function ServicePage() {
         setStatus({ kind: "success", text: "Данные автосервиса сохранены" });
       } else {
         setService(await api.post<Autoservice>("autoservice", body));
-        setStatus({ kind: "success", text: "Автосервис зарегистрирован. Теперь подключите Telegram-бота." });
+        setStatus({ kind: "success", text: "Автосервис зарегистрирован, типовые услуги добавлены. Теперь подключите Telegram-бота." });
       }
     } catch (err) {
       setStatus({ kind: "error", text: errorText(err) });
@@ -103,33 +106,18 @@ export default function ServicePage() {
 }
 
 function BotCard() {
-  const [bot, setBot] = useState<Bot | null | undefined>(undefined);
+  const { bot, setBot, error, reload } = useBot(4000);
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState<Status>(null);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    api
-      .get<Bot>("autoservice/bot")
-      .then(setBot)
-      .catch((e) => {
-        if (e instanceof ApiError && e.code === "bot_not_connected") setBot(null);
-        else setStatus({ kind: "error", text: errorText(e) });
-      });
-  }, []);
-
-  async function connect(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = e.currentTarget;
-    const token = String(new FormData(form).get("token"));
+  async function run(action: () => Promise<void>, success: string) {
     setBusy(true);
     setStatus(null);
     try {
-      const b = await api.put<Bot>("autoservice/bot", { token });
-      setBot(b);
-      setEditing(false);
-      form.reset();
-      setStatus({ kind: "success", text: `Бот @${b.username} подключён` });
+      await action();
+      setStatus({ kind: "success", text: success });
     } catch (err) {
       setStatus({ kind: "error", text: errorText(err) });
     } finally {
@@ -137,87 +125,128 @@ function BotCard() {
     }
   }
 
-  async function disconnect() {
-    setBusy(true);
-    setStatus(null);
-    try {
+  const disconnect = () =>
+    run(async () => {
       await api.del("autoservice/bot");
       setBot(null);
-      setStatus({ kind: "success", text: "Бот отключён" });
-    } catch (err) {
-      setStatus({ kind: "error", text: errorText(err) });
-    } finally {
-      setBusy(false);
-    }
+    }, "Бот отключён");
+
+  const removeRecipient = (chatId: number) =>
+    run(async () => {
+      await api.del(`autoservice/bot/recipients/${chatId}`);
+      await reload();
+    }, "Уведомления для этого чата отключены");
+
+  async function copyLink(link: string) {
+    await navigator.clipboard.writeText(link).catch(() => undefined);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   return (
-    <Card title="Telegram-бот">
-      <div className="space-y-4">
-        {status && <Alert kind={status.kind}>{status.text}</Alert>}
-        {bot === undefined && !status && <Loading />}
+    <>
+      <Card title="Telegram-бот" actions={bot ? <BotStatusBadge bot={bot} /> : undefined}>
+        <div className="space-y-4">
+          {status && <Alert kind={status.kind}>{status.text}</Alert>}
+          {error !== null && <Alert>{errorText(error)}</Alert>}
+          {bot === undefined && error === null && <Loading />}
+          {bot?.status === "error" && <Alert>{botErrorText(bot)}</Alert>}
 
-        {bot && (
-          <dl className="grid gap-4 text-sm sm:grid-cols-3">
-            <div>
-              <dt className="text-zinc-500">Бот</dt>
-              <dd>
-                <a className="font-medium underline" href={`https://t.me/${bot.username}`} target="_blank" rel="noreferrer">
-                  @{bot.username}
-                </a>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Токен</dt>
-              <dd className="font-mono">{bot.masked_token}</dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Подключён</dt>
-              <dd>{formatDate(bot.connected_at)}</dd>
-            </div>
-          </dl>
-        )}
+          {bot && (
+            <dl className="grid gap-4 text-sm sm:grid-cols-3">
+              <div>
+                <dt className="text-zinc-500">Бот</dt>
+                <dd>
+                  <a className="font-medium underline" href={bot.link} target="_blank" rel="noreferrer">
+                    @{bot.username}
+                  </a>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-zinc-500">Токен</dt>
+                <dd className="font-mono">{bot.masked_token}</dd>
+              </div>
+              <div>
+                <dt className="text-zinc-500">Подключён</dt>
+                <dd>{formatDate(bot.connected_at)}</dd>
+              </div>
+            </dl>
+          )}
 
-        {bot === null && (
-          <p className="text-sm text-zinc-600">
-            Создайте бота в <span className="font-medium">@BotFather</span> и вставьте его токен. Клиенты будут оставлять заявки через этого бота.
-          </p>
-        )}
+          {bot === null && (
+            <p className="text-sm text-zinc-600">
+              Создайте бота в{" "}
+              <a className="font-medium text-zinc-900 underline" href="https://t.me/BotFather" target="_blank" rel="noreferrer">
+                @BotFather
+              </a>{" "}
+              командой /newbot и вставьте его токен. Бот запустится сам и начнёт принимать заявки.
+            </p>
+          )}
 
-        {(bot === null || editing) && (
-          <form onSubmit={connect} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="flex-1">
-              <Field
-                label={bot ? "Новый токен" : "Токен бота"}
-                name="token"
-                required
-                autoComplete="off"
-                placeholder="123456789:AAH…"
-                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button type="submit" disabled={busy}>
-                {busy ? "Проверяем…" : bot ? "Заменить" : "Подключить"}
+          {(bot === null || editing) && (
+            <BotTokenForm
+              label={bot ? "Новый токен" : "Токен бота"}
+              submitLabel={bot ? "Заменить" : "Подключить бота"}
+              onCancel={editing ? () => setEditing(false) : undefined}
+              onConnected={(b) => {
+                setBot(b);
+                setEditing(false);
+                setStatus({ kind: "success", text: `Бот @${b.username} подключён и запускается` });
+              }}
+            />
+          )}
+
+          {bot && !editing && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => setEditing(true)}>
+                Заменить токен
               </Button>
-              {editing && (
-                <Button type="button" variant="secondary" onClick={() => setEditing(false)}>
-                  Отмена
-                </Button>
-              )}
+              <ConfirmButton label="Отключить бота" confirmLabel="Да, отключить" onConfirm={disconnect} disabled={busy} />
             </div>
-          </form>
-        )}
+          )}
+        </div>
+      </Card>
 
-        {bot && !editing && (
-          <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => setEditing(true)}>
-              Заменить токен
-            </Button>
-            <ConfirmButton label="Отключить бота" confirmLabel="Да, отключить" onConfirm={disconnect} disabled={busy} />
+      {bot && (
+        <Card title="Уведомления о новых заявках">
+          <div className="space-y-4 text-sm">
+            <p className="text-zinc-600">
+              Бот может присылать каждую новую заявку мастеру в Telegram. Откройте ссылку на телефоне мастера и нажмите
+              «Запустить». Ссылка одноразовая: для следующего человека появится новая.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={bot.notify_link}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 font-medium text-white hover:bg-zinc-700"
+              >
+                Подключить мой Telegram
+              </a>
+              <Button variant="secondary" onClick={() => copyLink(bot.notify_link)}>
+                {copied ? "Скопировано" : "Скопировать ссылку"}
+              </Button>
+            </div>
+            {bot.recipients.length === 0 ? (
+              <p className="text-zinc-500">Пока никто не подключён — заявки видны только в этом кабинете.</p>
+            ) : (
+              <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200">
+                {bot.recipients.map((r) => (
+                  <li key={r.chat_id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                    <span>
+                      <span className="font-medium">{r.name || `Чат ${r.chat_id}`}</span>
+                      <span className="text-zinc-500"> · с {formatDate(r.created_at)}</span>
+                    </span>
+                    <button className="text-red-700 hover:underline" disabled={busy} onClick={() => removeRecipient(r.chat_id)}>
+                      Отключить
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-        )}
-      </div>
-    </Card>
+        </Card>
+      )}
+    </>
   );
 }
