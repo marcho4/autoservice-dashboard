@@ -74,6 +74,9 @@ type fakeBot struct {
 	read     map[int64]int // chat -> how many of its messages the test has consumed
 	toasts   []string
 	polling  int
+	// description and shortDescription are what setMyDescription and setMyShortDescription set.
+	description      string
+	shortDescription string
 }
 
 // Telegram is a fake Bot API server. Bots are registered by token; anything else gets 401 like the real API.
@@ -249,6 +252,21 @@ func (t *Telegram) Toasts(token string) []string {
 	return append([]string(nil), t.bots[token].toasts...)
 }
 
+// Pending returns how many updates of the bot the runner has not confirmed yet by asking for the next ones.
+func (t *Telegram) Pending(token string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.bots[token].updates)
+}
+
+// Description returns the bot profile texts the bot has set.
+func (t *Telegram) Description(token string) (description, short string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	b := t.bots[token]
+	return b.description, b.shortDescription
+}
+
 // Polling returns how many getUpdates calls for the bot are in flight right now.
 func (t *Telegram) Polling(token string) int {
 	t.mu.Lock()
@@ -321,6 +339,11 @@ func (t *Telegram) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(params["text"], &text)
 		t.mu.Lock()
 		b.toasts = append(b.toasts, text)
+		t.mu.Unlock()
+	case "setMyDescription", "setMyShortDescription":
+		t.mu.Lock()
+		_ = json.Unmarshal(params["description"], &b.description)
+		_ = json.Unmarshal(params["short_description"], &b.shortDescription)
 		t.mu.Unlock()
 	case "deleteWebhook", "setMyCommands", "sendChatAction":
 	default:

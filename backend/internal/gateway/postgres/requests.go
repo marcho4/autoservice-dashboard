@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -124,21 +125,22 @@ func orderBy(s domain.SortOrder) string {
 	return "r.created_at DESC, r.id DESC"
 }
 
-// Create stores the request under the next per-autoservice number.
+// Create stores the request under req.ID and the next per-autoservice number.
 // A service that was deleted while the client was filling the form is stored by name only.
+// The number is taken in the same statement as the insert, so a failed insert (e.g. a taken ID) does not use it up.
 func (r *RequestRepo) Create(ctx context.Context, req domain.Request) (domain.Request, error) {
 	return scanRequest(r.db.QueryRow(ctx,
 		`WITH seq AS (
 			UPDATE autoservices SET request_seq = request_seq + 1 WHERE id = $1::uuid RETURNING request_seq
 		 )
-		 INSERT INTO requests AS r (autoservice_id, client_id, status, number, service_id, service_name, answers, message, phone)
-		 SELECT $1::uuid, $2::uuid, $3::text, seq.request_seq,
+		 INSERT INTO requests AS r (id, autoservice_id, client_id, status, number, service_id, service_name, answers, message, phone)
+		 SELECT $9::uuid, $1::uuid, $2::uuid, $3::text, seq.request_seq,
 			(SELECT s.id FROM services s WHERE s.id = $4::uuid AND s.autoservice_id = $1::uuid),
 			$5::text, $6::jsonb, $7::text, $8::text
 		 FROM seq
 		 RETURNING `+requestColumns,
 		req.AutoserviceID, req.ClientID, req.Status, req.ServiceID, req.ServiceName,
-		marshalAnswers(req.Answers), req.Message, req.Phone))
+		marshalAnswers(req.Answers), req.Message, req.Phone, req.ID))
 }
 
 func (r *RequestRepo) Get(ctx context.Context, autoserviceID, id uuid.UUID) (domain.RequestWithClient, error) {
@@ -186,11 +188,11 @@ func (r *RequestRepo) Counts(ctx context.Context, autoserviceID uuid.UUID) (doma
 	return counts, err
 }
 
-func (r *RequestRepo) CountByClientStatus(ctx context.Context, autoserviceID, clientID uuid.UUID, status domain.RequestStatus) (int, error) {
+func (r *RequestRepo) CountByClientSince(ctx context.Context, autoserviceID, clientID uuid.UUID, since time.Time) (int, error) {
 	var n int
 	err := r.db.QueryRow(ctx,
-		`SELECT count(*) FROM requests WHERE autoservice_id = $1 AND client_id = $2 AND status = $3`,
-		autoserviceID, clientID, status).Scan(&n)
+		`SELECT count(*) FROM requests WHERE autoservice_id = $1 AND client_id = $2 AND created_at > $3`,
+		autoserviceID, clientID, since).Scan(&n)
 	return n, err
 }
 

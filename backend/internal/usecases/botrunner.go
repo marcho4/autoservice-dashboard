@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/VictoriaMetrics/metrics"
 	"github.com/google/uuid"
@@ -63,14 +64,30 @@ func (s *BotRunnerService) CreateRequest(ctx context.Context, autoserviceID uuid
 	if err != nil {
 		return domain.Request{}, err
 	}
-	open, err := s.requests.CountByClientStatus(ctx, autoserviceID, client.ID, domain.StatusNew)
+	id := in.DraftID
+	if id == uuid.Nil {
+		id = uuid.New()
+	} else {
+		// A repeated submit of the same draft (e.g. the dialog state was not saved after the first one) is not a new request.
+		existing, err := s.requests.Get(ctx, autoserviceID, id)
+		switch {
+		case err == nil && existing.ClientID == client.ID:
+			return existing.Request, nil
+		case err == nil:
+			return domain.Request{}, fmt.Errorf("draft %s is a request of another client", id)
+		case !errors.Is(err, domain.ErrNotFound):
+			return domain.Request{}, err
+		}
+	}
+	recent, err := s.requests.CountByClientSince(ctx, autoserviceID, client.ID, time.Now().Add(-24*time.Hour))
 	if err != nil {
 		return domain.Request{}, err
 	}
-	if open >= domain.MaxOpenRequestsPerClient {
+	if recent >= domain.MaxRequestsPerClientPerDay {
 		return domain.Request{}, domain.ErrTooManyRequests
 	}
 	request, err := s.requests.Create(ctx, domain.Request{
+		ID:            id,
 		AutoserviceID: autoserviceID,
 		ClientID:      client.ID,
 		Status:        domain.StatusNew,

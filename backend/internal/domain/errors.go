@@ -15,7 +15,7 @@ var (
 	ErrInvalidBotToken    = errors.New("telegram rejected the bot token")
 	ErrInvalidTransition  = errors.New("status transition is not allowed")
 	ErrRequestNotEditable = errors.New("request can be changed only in status new")
-	ErrTooManyRequests    = errors.New("client has too many open requests")
+	ErrTooManyRequests    = errors.New("client has too many requests in the last 24 hours")
 	ErrServiceLimit       = errors.New("too many services")
 	ErrServicesExist      = errors.New("autoservice already has services")
 )

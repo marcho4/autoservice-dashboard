@@ -89,9 +89,24 @@ func TestExtractErrors(t *testing.T) {
 	if _, err := extract(t, srv, "x"); err == nil {
 		t.Error("an answer without JSON must be an error")
 	}
-	srv.SetReply(func(string, string) (int, string) { return http.StatusUnauthorized, "bad key" })
-	if _, err := extract(t, srv, "x"); err == nil || strings.Contains(err.Error(), "sk-test") {
-		t.Errorf("expected an error that does not leak the key, got %v", err)
+	srv.SetReply(func(string, string) (int, string) {
+		return http.StatusUnauthorized, "bad key sk-test for client +79001112233"
+	})
+	if _, err := extract(t, srv, "x"); err == nil || strings.Contains(err.Error(), "sk-test") || strings.Contains(err.Error(), "+7900") {
+		t.Errorf("expected an error with the status only, got %v", err)
+	}
+}
+
+func TestExtractDoesNotSendHugeCatalog(t *testing.T) {
+	srv := testkit.NewLLM()
+	defer srv.Close()
+	huge := []domain.Service{{ID: uuid.New(), Name: "Мойка", Description: strings.Repeat("я", maxCatalogLength)}}
+	c := New(Config{BaseURL: srv.URL(), Model: "test-model"})
+	if _, err := c.Extract(context.Background(), bot.ExtractInput{Services: huge, Message: "помыть"}); err == nil {
+		t.Error("a catalog over the limit must be an error")
+	}
+	if n := len(srv.Calls()); n != 0 {
+		t.Errorf("a catalog over the limit must not reach the LLM, got %d calls", n)
 	}
 }
 

@@ -29,7 +29,7 @@ docker compose up --build
 | Переменная | Назначение |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL |
-| `JWT_SECRET`, `JWT_TTL` | сессии сотрудников; секрет не короче 32 символов |
+| `JWT_SECRET`, `JWT_TTL` | сессии сотрудников; секрет не короче 32 символов, срок сессии по умолчанию `720h` (30 дней) |
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | любой OpenAI-совместимый API (`/chat/completions`): OpenAI, OpenRouter, локальный сервер. Пустой `LLM_MODEL` отключает LLM — клиент выбирает услугу кнопкой |
 | `LLM_TIMEOUT` | таймаут запроса к LLM, по умолчанию `20s` |
 | `APP_URL` | публичный https-адрес кабинета; добавляет в уведомление мастеру кнопку «Открыть в CRM» |
@@ -38,6 +38,13 @@ docker compose up --build
 | `TELEGRAM_API_URL` | адрес Bot API, по умолчанию `https://api.telegram.org` |
 
 Ключ LLM один на всю установку, владельцам автосервисов он не нужен.
+
+Забытый пароль сотрудника сбрасывает администратор сервера: команда печатает новый пароль и завершает все сессии
+этого аккаунта.
+
+```sh
+docker compose exec api ./app reset-password owner@example.com
+```
 
 ## Как устроен бот
 
@@ -63,7 +70,7 @@ docker compose up --build
 
 ```
 backend/   Go: HTTP API (chi), PostgreSQL (pgx), бот
-  cmd/                       serve | bot | migrate | probe
+  cmd/                       serve | bot | migrate | probe | reset-password
   internal/domain            сущности и правила: услуги, формы, заявки, статусы
   internal/usecases          сценарии кабинета и операции бота
   internal/bot               диалог (engine.go) и раннер long polling (runner.go)

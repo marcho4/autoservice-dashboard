@@ -63,7 +63,23 @@ type apiResponse struct {
 	} `json:"parameters"`
 }
 
+// call makes one Bot API request. A short flood-control pause (429) is waited out once, so a reply to a client
+// or a master notification is not lost; getUpdates is left to its own retry loop.
 func (c *Client) call(ctx context.Context, hc *http.Client, token, method string, payload, result any) error {
+	err := c.do(ctx, hc, token, method, payload, result)
+	var apiErr *APIError
+	if method == "getUpdates" || !errors.As(err, &apiErr) || apiErr.Code != http.StatusTooManyRequests || apiErr.RetryAfter > 5*time.Second {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return err
+	case <-time.After(apiErr.RetryAfter):
+	}
+	return c.do(ctx, hc, token, method, payload, result)
+}
+
+func (c *Client) do(ctx context.Context, hc *http.Client, token, method string, payload, result any) error {
 	body := []byte("{}")
 	if payload != nil {
 		var err error
@@ -256,6 +272,14 @@ func (c *Client) Setup(ctx context.Context, token string, commands []BotCommand)
 		return err
 	}
 	return c.call(ctx, c.http, token, "setMyCommands", map[string]any{"commands": commands}, nil)
+}
+
+// SetDescription sets the texts a user sees in the bot profile and on the empty chat screen.
+func (c *Client) SetDescription(ctx context.Context, token, description, shortDescription string) error {
+	if err := c.call(ctx, c.http, token, "setMyDescription", map[string]any{"description": description}, nil); err != nil {
+		return err
+	}
+	return c.call(ctx, c.http, token, "setMyShortDescription", map[string]any{"short_description": shortDescription}, nil)
 }
 
 // withoutToken strips the request URL from transport errors: it contains the bot token.

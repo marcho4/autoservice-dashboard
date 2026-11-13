@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/marcho4/autoservice-dashboard/backend/internal/app"
@@ -30,6 +31,25 @@ func migrate(ctx context.Context) error {
 	return postgres.Migrate(ctx, pool, log)
 }
 
+func resetPassword(ctx context.Context, email string) error {
+	cfg, err := config.LoadDB()
+	if err != nil {
+		return err
+	}
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	password, err := app.ResetPassword(ctx, pool, email)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("New password: %s\nAll sessions of this account are signed out.\n", password)
+	return nil
+}
+
 func serve(ctx context.Context, spamGo bool) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -37,6 +57,11 @@ func serve(ctx context.Context, spamGo bool) error {
 	}
 	log := logger.SetupLogging("autoservice-backend")
 	slog.SetDefault(log)
+	for name, value := range map[string]string{"JWT_SECRET": cfg.JWTSecret, "BOT_API_KEY": cfg.BotAPIKey} {
+		if strings.HasPrefix(value, "change-me") {
+			log.Warn("secret is still the placeholder from .env.example, replace it", "variable", name)
+		}
+	}
 
 	if spamGo {
 		slog.Info("Starting goroutines to test alert", "count", 150, "duration", 15*time.Minute)

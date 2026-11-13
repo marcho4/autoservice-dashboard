@@ -66,7 +66,7 @@ type RequestRepository interface {
 	Get(ctx context.Context, autoserviceID, id uuid.UUID) (domain.RequestWithClient, error)
 	List(ctx context.Context, autoserviceID uuid.UUID, f domain.RequestFilter) ([]domain.RequestWithClient, int, error)
 	Counts(ctx context.Context, autoserviceID uuid.UUID) (domain.RequestCounts, error)
-	CountByClientStatus(ctx context.Context, autoserviceID, clientID uuid.UUID, status domain.RequestStatus) (int, error)
+	CountByClientSince(ctx context.Context, autoserviceID, clientID uuid.UUID, since time.Time) (int, error)
 	ListByClient(ctx context.Context, autoserviceID, clientID uuid.UUID) ([]domain.Request, error)
 	UpdateStatus(ctx context.Context, autoserviceID, id uuid.UUID, from, to domain.RequestStatus) (domain.Request, error)
 	UpdateContent(ctx context.Context, autoserviceID, clientID, id uuid.UUID, in domain.RequestInput) (domain.Request, error)

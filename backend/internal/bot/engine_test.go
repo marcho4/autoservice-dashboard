@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -50,18 +51,21 @@ func (b *memBackend) CreateRequest(_ context.Context, _ uuid.UUID, who domain.Cl
 	if err != nil {
 		return domain.Request{}, err
 	}
-	open := 0
+	recent := 0
 	for _, r := range b.requests {
-		if r.Status == domain.StatusNew {
-			open++
+		if r.ID == in.DraftID {
+			return r, nil
+		}
+		if time.Since(r.CreatedAt) < 24*time.Hour {
+			recent++
 		}
 	}
-	if open >= domain.MaxOpenRequestsPerClient {
+	if recent >= domain.MaxRequestsPerClientPerDay {
 		return domain.Request{}, domain.ErrTooManyRequests
 	}
 	b.clients[who.TelegramID] = domain.Client{TelegramID: who.TelegramID, Name: who.Name, Phone: in.Phone}
 	r := domain.Request{
-		ID: uuid.New(), Number: len(b.requests) + 1, Status: domain.StatusNew,
+		ID: in.DraftID, Number: len(b.requests) + 1, Status: domain.StatusNew, CreatedAt: time.Now(),
 		ServiceID: in.ServiceID, ServiceName: in.ServiceName, Answers: in.Answers, Message: in.Message, Phone: in.Phone,
 	}
 	b.requests = append(b.requests, r)
@@ -109,6 +113,8 @@ func (s memState) Save(_ context.Context, _ uuid.UUID, chatID int64, state []byt
 	s[chatID] = state
 	return nil
 }
+
+func (memState) DeleteExpired(context.Context) error { return nil }
 
 type extractorFunc func(in ExtractInput) (Extraction, error)
 
@@ -315,7 +321,7 @@ func TestFreeFormRequestIsPrefilledByLLM(t *testing.T) {
 func TestUnknownIntentFallsBackToServiceButtons(t *testing.T) {
 	d := newDialog(t, func(ExtractInput) (Extraction, error) { return Extraction{}, nil })
 
-	d.text("Добрый день").expect("какая услуга вам нужна").expectButtons("Замена масла", "Шиномонтаж")
+	d.text("посмотрите машину").expect("какая услуга вам нужна").expectButtons("Замена масла", "Шиномонтаж")
 	// The client may also describe the task again instead of pressing a button.
 	d.text("ну мне бы машину посмотреть").expectButtons("Замена масла", "Шиномонтаж")
 	if d.llm != 2 {
@@ -418,16 +424,16 @@ func TestCommandsAndUnsupportedInput(t *testing.T) {
 	d.text("/cancel").expect("нет незавершённой заявки")
 	d.text("/my").expect("пока нет заявок")
 	d.text("/help").expect("/my", "/cancel")
-	d.send(Incoming{}).expect("только текст")
+	d.send(Incoming{}).expect("Голосовые и фото я пока не принимаю")
 
-	d.text("привет").click("Замена масла").expect("Какой у вас автомобиль?")
+	d.text("нужна помощь").click("Замена масла").expect("Какой у вас автомобиль?")
 	d.text("/cancel").expect("заявку не отправляю")
 	d.text("/start").expect("Здравствуйте! Чем могу помочь?")
 }
 
 func TestServiceRemovedWhileFilling(t *testing.T) {
 	d := newDialog(t, nil)
-	d.text("привет").click("Замена масла").expect("Какой у вас автомобиль?")
+	d.text("нужна помощь").click("Замена масла").expect("Какой у вас автомобиль?")
 	d.backend.services = []domain.Service{tireService}
 	d.text("Kia Rio").expect("услуга больше недоступна").expectButtons("Шиномонтаж")
 
@@ -470,11 +476,6 @@ func TestMyRequestsAndCancel(t *testing.T) {
 		t.Errorf("master must be told about the cancellation: %+v", d.last.Messages)
 	}
 	d.text("/my").expect("отменена").expectButtons()
-
-	for range domain.MaxOpenRequestsPerClient {
-		d.text("переобуться").click("✅ Отправить").expect("принята")
-	}
-	d.text("переобуться").click("✅ Отправить").expect("мастер ещё не разобрал")
 }
 
 func TestMasterLink(t *testing.T) {
@@ -499,7 +500,7 @@ func TestLLMBudgetPerChat(t *testing.T) {
 
 func TestClientInputIsEscaped(t *testing.T) {
 	d := newDialog(t, nil)
-	d.text("привет").click("Замена масла")
+	d.text("нужна помощь").click("Замена масла")
 	d.text("<b>Жигули</b> & co").text("1").click("Пропустить").text("+79001112233").
 		expect("Автомобиль: &lt;b&gt;Жигули&lt;/b&gt; &amp; co")
 }
@@ -532,4 +533,133 @@ func TestLongestFormFitsTelegramMessage(t *testing.T) {
 	if got := len([]rune(d.backend.requests[0].Answers[0].Value)); got != domain.MaxAnswerLength {
 		t.Errorf("stored answer has %d characters, want %d", got, domain.MaxAnswerLength)
 	}
+}
+
+func TestButtonsOfEarlierQuestionsAndDraftsAreStale(t *testing.T) {
+	car := domain.Service{ID: uuid.New(), Name: "Подбор", Active: true, Fields: []domain.FormField{
+		{ID: "fuel", Label: "Топливо", Question: "Какое топливо?", Type: domain.FieldChoice, Required: true, Options: []string{"Бензин", "Дизель"}},
+		{ID: "gear", Label: "КПП", Question: "Какая коробка?", Type: domain.FieldChoice, Required: true, Options: []string{"Механика", "Автомат"}},
+	}}
+	d := newDialog(t, nil)
+	d.backend.services = []domain.Service{car}
+
+	fuelQuestion := d.text("нужен подбор").expect("Какое топливо?").last
+	d.text("Бензин").expect("Какая коробка?")
+	d.last = fuelQuestion
+	d.click("Дизель")
+	if d.last.Toast != staleButton {
+		t.Errorf("an option of an answered question must be stale: %+v", d.last)
+	}
+	d.text("Автомат").text("+79001112233").expect("Топливо: Бензин", "КПП: Автомат")
+	for _, label := range d.buttons() {
+		if data := d.callbackData(label); len(data) > 64 {
+			t.Errorf("button %q has %d bytes of data, Telegram allows 64", label, len(data))
+		}
+	}
+
+	oldSummary := d.last
+	d.click("❌ Отменить")
+	d.text("нужен подбор").text("Дизель").text("Механика").text("+79001112233").expect("Проверьте заявку")
+	d.last = oldSummary
+	d.click("✅ Отправить")
+	if d.last.Toast != staleButton || len(d.backend.requests) != 0 {
+		t.Errorf("the summary of a cancelled draft must not send the new one: %+v, %d requests", d.last, len(d.backend.requests))
+	}
+}
+
+// callbackData returns the data of the inline button with the given label on the last bot message.
+func (d *dialog) callbackData(label string) string {
+	for _, m := range d.last.Messages {
+		for _, row := range m.Buttons {
+			for _, b := range row {
+				if b.Text == label {
+					return b.Data
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func TestClientCanLeaveAWrongService(t *testing.T) {
+	d := newDialog(t, func(ExtractInput) (Extraction, error) { return Extraction{ServiceID: oilService.ID}, nil })
+	d.text("что-то стучит").expect("Оформляю заявку: <b>Замена масла</b>").expectButtons("Другая услуга")
+	d.click("Другая услуга").expectButtons("Замена масла", "Шиномонтаж")
+	// A service the client picked by hand needs no way out.
+	d.click("Шиномонтаж").expect("Что нужно сделать?").expectButtons("Смена шин", "Балансировка")
+	d.text("Передумал!").expect("заявку не отправляю")
+	if len(d.backend.requests) != 0 {
+		t.Fatal("a cancelled draft must not create a request")
+	}
+}
+
+func TestCourtesyMessagesAreAnsweredWithoutLLM(t *testing.T) {
+	d := newDialog(t, func(ExtractInput) (Extraction, error) {
+		return Extraction{ServiceID: tireService.ID, Values: map[string]string{"work": "Смена шин"}, Phone: "+79001112233"}, nil
+	})
+	d.text("Добрый день!").expect("Здравствуйте! Напишите, что нужно сделать с машиной.")
+	d.text("переобуться").click("✅ Отправить").expect("принята")
+	d.text("Спасибо)").expect("Пожалуйста! Если понадобится помощь — напишите.")
+	if d.llm != 1 {
+		t.Errorf("only the request itself goes to the LLM, got %d calls", d.llm)
+	}
+	if got := d.backend.requests[0].Message; got != "переобуться" {
+		t.Errorf("a greeting must not become the client's message, got %q", got)
+	}
+	d.text("/start")
+	if d.replies() != "Здравствуйте! Чем могу помочь?" {
+		t.Errorf("/start answer is fixed by the customer, got %q", d.replies())
+	}
+}
+
+func TestFollowUpMessagesAddToTheFirst(t *testing.T) {
+	d := newDialog(t, func(in ExtractInput) (Extraction, error) {
+		if !strings.Contains(in.Message, "шиномонтаж") {
+			return Extraction{}, nil
+		}
+		return Extraction{ServiceID: tireService.ID, Values: map[string]string{"work": "Смена шин"}, Phone: "+79001112233"}, nil
+	})
+	d.text("колесо спускает за ночь").expect("какая услуга вам нужна")
+	d.text("шиномонтаж").click("✅ Отправить").expect("принята")
+	if got := d.backend.requests[0].Message; got != "колесо спускает за ночь\nшиномонтаж" {
+		t.Errorf("the master must see every free-form message of the client, got %q", got)
+	}
+}
+
+func TestDailyRequestLimitKeepsTheDraft(t *testing.T) {
+	d := newDialog(t, func(ExtractInput) (Extraction, error) {
+		return Extraction{ServiceID: tireService.ID, Values: map[string]string{"work": "Смена шин"}, Phone: "+79001112233"}, nil
+	})
+	for range domain.MaxRequestsPerClientPerDay {
+		d.text("переобуться").click("✅ Отправить").expect("принята")
+	}
+	summary := d.text("переобуться").last
+	d.click("✅ Отправить").expect("Вы уже оставили 5 заявок за сутки. Мастер свяжется с вами по ним; новую можно будет отправить позже.")
+
+	// A day later the client sends the same draft with the same button.
+	for i := range d.backend.requests {
+		d.backend.requests[i].CreatedAt = time.Now().Add(-25 * time.Hour)
+	}
+	d.last = summary
+	d.click("✅ Отправить").expect("Заявка №6 принята")
+}
+
+func TestLLMBudgetPerAutoservice(t *testing.T) {
+	d := newDialog(t, func(ExtractInput) (Extraction, error) { return Extraction{}, nil })
+	for i := range llmCallsPerAutoservice + 1 {
+		// Every message comes from a new chat, so the per-chat budget never runs out.
+		d.from.TelegramID = int64(1000 + i)
+		d.text("ерунда какая-то").expectButtons("Замена масла", "Шиномонтаж")
+	}
+	if d.llm != llmCallsPerAutoservice {
+		t.Errorf("LLM calls must be capped at %d per autoservice, got %d", llmCallsPerAutoservice, d.llm)
+	}
+}
+
+func TestUnsupportedMessageRepeatsTheQuestion(t *testing.T) {
+	d := newDialog(t, nil)
+	d.text("нужна помощь").click("Шиномонтаж")
+	d.send(Incoming{}).expect("Голосовые и фото я пока не принимаю", "Что нужно сделать?").expectButtons("Смена шин", "Балансировка")
+	d.click("Смена шин")
+	d.send(Incoming{}).expect("Голосовые и фото я пока не принимаю", "Оставьте номер телефона").expectButtons("📱 Отправить мой номер")
 }

@@ -29,8 +29,14 @@ func (l *LeaderLock) Acquire(ctx context.Context) (lost <-chan struct{}, release
 			var locked bool
 			err = conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, botRunnerLockKey).Scan(&locked)
 			if err == nil && locked {
-				lost, release := l.hold(conn)
-				return lost, release, nil
+				// Short keepalives: after a hard crash of this node the server frees the lock in ~25s, not ~2h.
+				_, err = conn.Exec(ctx, `SET tcp_keepalives_idle = 10; SET tcp_keepalives_interval = 5; SET tcp_keepalives_count = 3`)
+				if err == nil {
+					lost, release := l.hold(conn)
+					return lost, release, nil
+				}
+				// Closing the session frees the lock: the connection must not go back to the pool holding it.
+				_ = conn.Conn().Close(ctx)
 			}
 			conn.Release()
 		}
@@ -53,6 +59,8 @@ func (l *LeaderLock) hold(conn *pgxpool.Conn) (<-chan struct{}, func()) {
 		defer close(done)
 		ticker := time.NewTicker(l.interval)
 		defer ticker.Stop()
+		// One slow ping is not a lost lock: stopping and restarting every bot is worse than waiting a few seconds.
+		failures := 0
 		for {
 			select {
 			case <-stop:
@@ -61,7 +69,12 @@ func (l *LeaderLock) hold(conn *pgxpool.Conn) (<-chan struct{}, func()) {
 				ctx, cancel := context.WithTimeout(context.Background(), l.interval)
 				err := conn.Ping(ctx)
 				cancel()
-				if err != nil {
+				if err == nil {
+					failures = 0
+					continue
+				}
+				failures++
+				if failures >= 3 {
 					close(lost)
 					return
 				}

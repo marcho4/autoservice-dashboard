@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -34,9 +35,11 @@ type Backend interface {
 }
 
 // StateStore persists the dialog state of a chat as an opaque document.
+// A state left untouched for a day is not loaded any more, and DeleteExpired removes it.
 type StateStore interface {
 	Load(ctx context.Context, autoserviceID uuid.UUID, chatID int64) ([]byte, error)
 	Save(ctx context.Context, autoserviceID uuid.UUID, chatID int64, state []byte) error
+	DeleteExpired(ctx context.Context) error
 }
 
 type ExtractInput struct {
@@ -103,12 +106,22 @@ type Engine struct {
 	appURL    string
 	log       *slog.Logger
 	now       func() time.Time
+
+	// LLM budget of each autoservice. In memory is enough: only the leader runner handles updates.
+	llmMu    sync.Mutex
+	llmUsage map[uuid.UUID]llmUsage
+}
+
+type llmUsage struct {
+	since time.Time
+	calls int
 }
 
 // NewEngine builds the dialog engine. extractor may be nil: the client then picks the service with buttons.
 // appURL, when it is an https URL, adds an "open in CRM" button to master notifications.
 func NewEngine(backend Backend, state StateStore, extractor Extractor, appURL string, log *slog.Logger) *Engine {
-	return &Engine{backend: backend, state: state, extractor: extractor, appURL: strings.TrimRight(appURL, "/"), log: log, now: time.Now}
+	return &Engine{backend: backend, state: state, extractor: extractor, appURL: strings.TrimRight(appURL, "/"), log: log, now: time.Now,
+		llmUsage: map[uuid.UUID]llmUsage{}}
 }
 
 type step string
@@ -124,6 +137,7 @@ const (
 
 type conversation struct {
 	Step      step              `json:"step,omitempty"`
+	DraftID   uuid.UUID         `json:"draft_id"` // the future request ID: binds the summary buttons, makes the submit idempotent
 	ServiceID uuid.UUID         `json:"service_id"`
 	Message   string            `json:"message,omitempty"`
 	Values    map[string]string `json:"values,omitempty"`
@@ -136,10 +150,11 @@ type conversation struct {
 }
 
 const (
-	maxMessageLength = 2000
-	llmWindow        = time.Hour
-	llmCallsPerChat  = 20
-	maxListedOrders  = 5
+	maxMessageLength       = 2000
+	llmWindow              = time.Hour
+	llmCallsPerChat        = 20
+	llmCallsPerAutoservice = 300
+	maxListedOrders        = 5
 
 	// Telegram rejects messages over 4096 characters. Long answers are shortened in the summary and in the
 	// master notification so that even a full form of maximum-length answers fits; the CRM keeps them whole.
@@ -157,6 +172,7 @@ const (
 	cbBack      = "back"
 	cbCancel    = "cancel"
 	cbCancelReq = "rcancel"
+	cbOther     = "other" // another service instead of the one the LLM picked
 
 	editPhone   = "phone"
 	editService = "service"
@@ -222,9 +238,29 @@ func (t *turn) dispatch() error {
 	case strings.TrimSpace(t.in.Text) != "":
 		return t.onText(strings.TrimSpace(t.in.Text))
 	default:
-		t.say("Пока я понимаю только текст. Напишите, пожалуйста, словами.")
-		return nil
+		return t.onUnsupported()
 	}
+}
+
+// onUnsupported answers a photo, a voice message and the like, and repeats what the bot is waiting for.
+func (t *turn) onUnsupported() error {
+	const text = "Голосовые и фото я пока не принимаю — напишите, пожалуйста, текстом."
+	switch t.st.Step {
+	case stepField:
+		svc, ok, err := t.service()
+		if !ok {
+			return err
+		}
+		if f, ok := svc.Field(t.st.Current); ok {
+			t.askField(f, text)
+			return nil
+		}
+		return t.advance(svc, text)
+	case stepPhone:
+		return t.askPhone(text)
+	}
+	t.say(text)
+	return nil
 }
 
 func (t *turn) onCommand() error {
@@ -279,6 +315,10 @@ func (t *turn) linkMaster(code string) error {
 }
 
 func (t *turn) onText(text string) error {
+	if (t.st.Step == stepField || t.st.Step == stepPhone) && isCancel(text) {
+		t.cancelDraft()
+		return nil
+	}
 	switch t.st.Step {
 	case stepField:
 		return t.answerField(text)
@@ -292,6 +332,10 @@ func (t *turn) onText(text string) error {
 	case stepEdit:
 		return t.showEditMenu()
 	default:
+		if reply, ok := smallTalk[shortWord(text)]; ok {
+			t.say(reply)
+			return nil
+		}
 		return t.classify(text)
 	}
 }
@@ -305,8 +349,11 @@ func (t *turn) classify(text string) error {
 	if len(services) == 0 {
 		return t.noServices()
 	}
-	text = truncate(text, maxMessageLength)
-	t.st.Message = text
+	// Later messages add to the first one instead of replacing it: the first usually describes the problem best.
+	if t.st.Message != "" {
+		text = t.st.Message + "\n" + text
+	}
+	t.st.Message = truncate(text, maxMessageLength)
 
 	var ext Extraction
 	understood := false
@@ -315,7 +362,7 @@ func (t *turn) classify(text string) error {
 		if err != nil {
 			return err
 		}
-		ext, err = t.e.extractor.Extract(t.ctx, ExtractInput{Autoservice: a.Name, Services: services, Message: text})
+		ext, err = t.e.extractor.Extract(t.ctx, ExtractInput{Autoservice: a.Name, Services: services, Message: t.st.Message})
 		if err != nil {
 			// The dialog must go on without the LLM: the client picks the service by hand.
 			t.e.log.Warn("llm extraction failed", "autoservice_id", t.autoserviceID, "error", err)
@@ -325,7 +372,15 @@ func (t *turn) classify(text string) error {
 	}
 	for _, svc := range services {
 		if understood && svc.ID == ext.ServiceID {
-			return t.startForm(svc, ext)
+			if err := t.startForm(svc, ext); err != nil {
+				return err
+			}
+			// The LLM may have guessed wrong: the way out is right under the first question.
+			if t.st.Step == stepField && len(services) > 1 {
+				msg := &t.res.Messages[len(t.res.Messages)-1]
+				msg.Buttons = append(msg.Buttons, []Button{{Text: "Другая услуга", Data: cbOther + ":" + t.st.DraftID.String()}})
+			}
+			return nil
 		}
 	}
 	if !understood && len(services) == 1 {
@@ -340,10 +395,25 @@ func (t *turn) spendLLMCall() bool {
 	if now.Sub(time.Unix(t.st.LLMSince, 0)) > llmWindow {
 		t.st.LLMSince, t.st.LLMCalls = now.Unix(), 0
 	}
-	if t.st.LLMCalls >= llmCallsPerChat {
+	if t.st.LLMCalls >= llmCallsPerChat || !t.e.spendAutoserviceLLMCall(t.autoserviceID, now) {
 		return false
 	}
 	t.st.LLMCalls++
+	return true
+}
+
+func (e *Engine) spendAutoserviceLLMCall(autoserviceID uuid.UUID, now time.Time) bool {
+	e.llmMu.Lock()
+	defer e.llmMu.Unlock()
+	u := e.llmUsage[autoserviceID]
+	if now.Sub(u.since) > llmWindow {
+		u = llmUsage{since: now}
+	}
+	if u.calls >= llmCallsPerAutoservice {
+		return false
+	}
+	u.calls++
+	e.llmUsage[autoserviceID] = u
 	return true
 }
 
@@ -370,6 +440,7 @@ func (t *turn) askService(services []domain.Service, text string) {
 }
 
 func (t *turn) startForm(svc domain.Service, ext Extraction) error {
+	t.st.DraftID = uuid.New()
 	t.st.ServiceID = svc.ID
 	t.st.Values = map[string]string{}
 	t.st.Skipped = nil
@@ -433,10 +504,10 @@ func (t *turn) askField(f domain.FormField, intro string) {
 	t.st.Current = f.ID
 	msg := t.say(join(intro, esc(f.Prompt())))
 	for i, opt := range f.Options {
-		msg.Buttons = append(msg.Buttons, []Button{{Text: opt, Data: cbOption + ":" + strconv.Itoa(i)}})
+		msg.Buttons = append(msg.Buttons, []Button{{Text: opt, Data: cbOption + ":" + f.ID + ":" + strconv.Itoa(i)}})
 	}
 	if !f.Required {
-		msg.Buttons = append(msg.Buttons, []Button{{Text: "Пропустить", Data: cbSkip}})
+		msg.Buttons = append(msg.Buttons, []Button{{Text: "Пропустить", Data: cbSkip + ":" + f.ID}})
 	}
 }
 
@@ -530,9 +601,10 @@ func (t *turn) showSummaryOf(svc domain.Service, intro string) error {
 		fmt.Fprintf(&b, "%s: %s\n", esc(a.Label), esc(truncate(a.Value, shownAnswerLength)))
 	}
 	fmt.Fprintf(&b, "Телефон: %s\n\nВсё верно?", esc(domain.FormatPhone(t.st.Phone)))
+	draft := ":" + t.st.DraftID.String()
 	t.say(join(intro, b.String())).Buttons = [][]Button{
-		{{Text: "✅ Отправить", Data: cbConfirm}},
-		{{Text: "✏️ Изменить", Data: cbEdit}, {Text: "❌ Отменить", Data: cbCancel}},
+		{{Text: "✅ Отправить", Data: cbConfirm + draft}},
+		{{Text: "✏️ Изменить", Data: cbEdit + draft}, {Text: "❌ Отменить", Data: cbCancel + draft}},
 	}
 	return nil
 }
@@ -565,6 +637,7 @@ func (t *turn) submit() error {
 		return t.advance(svc, "Осталось уточнить ещё кое-что.")
 	}
 	req, err := t.e.backend.CreateRequest(t.ctx, t.autoserviceID, t.in.From, domain.RequestInput{
+		DraftID:     t.st.DraftID,
 		ServiceID:   &svc.ID,
 		ServiceName: svc.Name,
 		Answers:     t.answers(svc),
@@ -572,9 +645,10 @@ func (t *turn) submit() error {
 		Phone:       t.st.Phone,
 	})
 	if errors.Is(err, domain.ErrTooManyRequests) {
-		t.reset()
-		t.say(fmt.Sprintf("У вас уже %d заявок, которые мастер ещё не разобрал. Дождитесь ответа или отмените лишнюю: /my",
-			domain.MaxOpenRequestsPerClient))
+		// The draft stays: the client can send it with the same button once the limit allows.
+		t.res.ClearButtons = false
+		t.say(fmt.Sprintf("Вы уже оставили %d заявок за сутки. Мастер свяжется с вами по ним; новую можно будет отправить позже.",
+			domain.MaxRequestsPerClientPerDay))
 		return nil
 	}
 	if err != nil {
@@ -628,7 +702,7 @@ func newRequestNotice(req domain.Request, who domain.ClientIdentity) string {
 var statusForClient = map[domain.RequestStatus]string{
 	domain.StatusNew:        "ждёт мастера",
 	domain.StatusInProgress: "в работе",
-	domain.StatusClosed:     "выполнена",
+	domain.StatusClosed:     "закрыта",
 	domain.StatusRejected:   "отклонена",
 	domain.StatusCancelled:  "отменена",
 }
@@ -704,8 +778,18 @@ func (t *turn) onCallback() error {
 		cbCancel:    {stepConfirm, stepEdit},
 		cbEditField: {stepEdit},
 		cbBack:      {stepEdit},
+		cbOther:     {stepField, stepPhone, stepConfirm},
 	}
-	if !containsStep(valid[action], t.st.Step) {
+	// Buttons of a question belong to its field, buttons of the summary to the draft.
+	fresh := true
+	switch action {
+	case cbOption, cbSkip:
+		field, _, _ := strings.Cut(arg, ":")
+		fresh = field == t.st.Current
+	case cbConfirm, cbEdit, cbCancel, cbOther:
+		fresh = arg == t.st.DraftID.String()
+	}
+	if !fresh || !containsStep(valid[action], t.st.Step) {
 		t.res.Toast = staleButton
 		return nil
 	}
@@ -749,7 +833,8 @@ func (t *turn) onCallback() error {
 			t.picked("пропущено")
 			return t.advance(svc, "")
 		}
-		i, err := strconv.Atoi(arg)
+		_, option, _ := strings.Cut(arg, ":")
+		i, err := strconv.Atoi(option)
 		if err != nil || i < 0 || i >= len(f.Options) {
 			t.res.Toast = staleButton
 			return nil
@@ -773,6 +858,15 @@ func (t *turn) onCallback() error {
 	case cbCancel:
 		t.res.ClearButtons = true
 		t.cancelDraft()
+		return nil
+
+	case cbOther:
+		t.res.ClearButtons = true
+		services, err := t.e.backend.ActiveServices(t.ctx, t.autoserviceID)
+		if err != nil {
+			return err
+		}
+		t.askService(services, "Выберите услугу:")
 		return nil
 
 	case cbEditField:
@@ -811,12 +905,36 @@ func containsStep(steps []step, s step) bool {
 	return false
 }
 
+// shortWord normalizes a one-word reply such as "Спасибо!" for matching against fixed lists.
+func shortWord(text string) string { return strings.Trim(strings.ToLower(text), " .,!)") }
+
 func isYes(text string) bool {
-	switch strings.Trim(strings.ToLower(text), " .!") {
+	switch shortWord(text) {
 	case "да", "ага", "отправить", "отправляй", "отправляйте", "верно", "всё верно", "все верно", "ок", "ok", "подтверждаю", "+":
 		return true
 	}
 	return false
+}
+
+func isCancel(text string) bool {
+	switch shortWord(text) {
+	case "отмена", "отменить", "стоп", "передумал", "передумала", "не надо":
+		return true
+	}
+	return false
+}
+
+const (
+	thanksReply   = "Пожалуйста! Если понадобится помощь — напишите."
+	greetingReply = "Здравствуйте! Напишите, что нужно сделать с машиной."
+)
+
+// smallTalk answers courtesy messages without the LLM, which would only offer the list of services.
+var smallTalk = map[string]string{
+	"спасибо": thanksReply, "спс": thanksReply, "благодарю": thanksReply, "ок": thanksReply,
+	"хорошо": thanksReply, "понял": thanksReply, "поняла": thanksReply, "👍": thanksReply,
+	"привет": greetingReply, "здравствуйте": greetingReply, "добрый день": greetingReply, "добрый вечер": greetingReply,
+	"доброе утро": greetingReply, "здрасьте": greetingReply, "hi": greetingReply, "hello": greetingReply,
 }
 
 func esc(s string) string { return html.EscapeString(s) }

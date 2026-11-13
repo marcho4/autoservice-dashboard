@@ -2,6 +2,8 @@ package usecases
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
 
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
@@ -54,6 +56,31 @@ func (s *AccountService) ChangePassword(ctx context.Context, current domain.Empl
 		return Session{}, err
 	}
 	return s.auth.newSession(emp)
+}
+
+// ResetPassword gives the employee a new random password and signs out all their sessions.
+// It is the way back into a forgotten account, run by the operator from the server.
+func (s *AccountService) ResetPassword(ctx context.Context, email string) (string, error) {
+	email, err := domain.NormalizeEmail(email)
+	if err != nil {
+		return "", err
+	}
+	emp, err := s.employees.GetByEmail(ctx, email)
+	if errors.Is(err, domain.ErrNotFound) {
+		return "", fmt.Errorf("no employee with email %s: %w", email, err)
+	}
+	if err != nil {
+		return "", err
+	}
+	password := rand.Text()
+	hash, err := s.hasher.Hash(password)
+	if err != nil {
+		return "", fmt.Errorf("hash password: %w", err)
+	}
+	if _, err := s.employees.UpdatePassword(ctx, emp.ID, hash); err != nil {
+		return "", err
+	}
+	return password, nil
 }
 
 func (s *AccountService) Delete(ctx context.Context, current domain.Employee, password string) error {

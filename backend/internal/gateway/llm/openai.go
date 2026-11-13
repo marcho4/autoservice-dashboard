@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/VictoriaMetrics/metrics"
 	"github.com/google/uuid"
@@ -62,12 +63,10 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
-type statusError struct {
-	status int
-	body   string
-}
+// statusError carries only the status: the provider's error body may echo the prompt with client data.
+type statusError struct{ status int }
 
-func (e *statusError) Error() string { return fmt.Sprintf("llm: status %d: %s", e.status, e.body) }
+func (e *statusError) Error() string { return fmt.Sprintf("llm: status %d", e.status) }
 
 // complete sends one system+user exchange and returns the text of the answer.
 func (c *Client) complete(ctx context.Context, system, user string) (string, error) {
@@ -110,7 +109,7 @@ func (c *Client) send(ctx context.Context, system, user string, jsonMode bool) (
 		return "", fmt.Errorf("llm: read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", &statusError{status: resp.StatusCode, body: string(data[:min(len(data), 300)])}
+		return "", &statusError{status: resp.StatusCode}
 	}
 	var parsed chatResponse
 	if err := json.Unmarshal(data, &parsed); err != nil || len(parsed.Choices) == 0 {
@@ -151,8 +150,11 @@ type promptService struct {
 	Fields      []promptField `json:"fields"`
 }
 
+// maxCatalogLength keeps one huge catalog from spending the shared LLM key.
+const maxCatalogLength = 20000
+
 // buildPrompt lists the services under short numeric keys: they are cheaper and harder to garble than UUIDs.
-func buildPrompt(in bot.ExtractInput) string {
+func buildPrompt(in bot.ExtractInput) (string, error) {
 	services := make([]promptService, len(in.Services))
 	for i, s := range in.Services {
 		ps := promptService{Key: strconv.Itoa(i + 1), Name: s.Name, Description: s.Description, Fields: []promptField{}}
@@ -162,14 +164,21 @@ func buildPrompt(in bot.ExtractInput) string {
 		services[i] = ps
 	}
 	catalog, _ := json.MarshalIndent(services, "", " ")
-	return fmt.Sprintf(systemPrompt, in.Autoservice, catalog)
+	if n := utf8.RuneCount(catalog); n > maxCatalogLength {
+		return "", fmt.Errorf("llm: service catalog is %d characters, over the limit of %d: not sent", n, maxCatalogLength)
+	}
+	return fmt.Sprintf(systemPrompt, in.Autoservice, catalog), nil
 }
 
 // Extract implements bot.Extractor.
 func (c *Client) Extract(ctx context.Context, in bot.ExtractInput) (bot.Extraction, error) {
 	start := time.Now()
-	answer, err := c.complete(ctx, buildPrompt(in), in.Message)
 	var ext bot.Extraction
+	prompt, err := buildPrompt(in)
+	if err != nil {
+		return ext, err
+	}
+	answer, err := c.complete(ctx, prompt, in.Message)
 	if err == nil {
 		ext, err = parseExtraction(answer, in.Services)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	"github.com/marcho4/autoservice-dashboard/backend/internal/app"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/bot"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/config"
+	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/gateway/postgres"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/testkit"
 )
@@ -360,10 +362,13 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 	expect(t, a.do("PUT", "/api/v1/requests/"+id1+"/note", tokB, map[string]string{"note": "x"}), 404, "B cannot annotate A's request")
 
 	for i := range 5 {
-		expect(t, newReq("222222", 500, "Kia"), 201, fmt.Sprintf("open request %d", i+1))
+		expect(t, newReq("222222", 500, "Kia"), 201, fmt.Sprintf("request %d of the day", i+1))
 	}
+	// Cancelling a request does not give the client another one: the limit counts every status.
+	lastOfDay := a.runner("GET", "/bots/222222/clients/500/requests", nil).body["items"].([]any)[0].(map[string]any)["id"].(string)
+	expect(t, a.runner("POST", "/bots/222222/clients/500/requests/"+lastOfDay+"/cancel", nil), 200, "client cancels one")
 	r = newReq("222222", 500, "Kia")
-	expect(t, r, 429, "too many open requests of one client")
+	expect(t, r, 429, "too many requests of one client in a day")
 	if errCode(r) != "too_many_requests" {
 		t.Fatalf("code %s", errCode(r))
 	}
@@ -423,7 +428,7 @@ func TestServiceCatalogFlow(t *testing.T) {
 	list := a.do("GET", "/api/v1/services", tok, nil)
 	expect(t, list, 200, "list services")
 	defaults := items(list)
-	if got := names(defaults); got != "Диагностика, Техобслуживание и замена масла, Ремонт, Шиномонтаж, Другой вопрос" {
+	if got := names(defaults); got != "Диагностика, Техобслуживание и замена масла, Ремонт, Шиномонтаж, Вопрос мастеру" {
 		t.Fatalf("unexpected starter catalog: %s", got)
 	}
 	field := defaults[0]["fields"].([]any)[0].(map[string]any)
@@ -473,7 +478,7 @@ func TestServiceCatalogFlow(t *testing.T) {
 	order := []string{washID, defaults[4]["id"].(string)}
 	r = a.do("PUT", "/api/v1/services/order", tok, map[string]any{"ids": order})
 	expect(t, r, 200, "reorder")
-	if got := names(items(r)); got != "Мойка, Другой вопрос, Диагностика, Техобслуживание и замена масла, Ремонт, Шиномонтаж" {
+	if got := names(items(r)); got != "Мойка, Вопрос мастеру, Диагностика, Техобслуживание и замена масла, Ремонт, Шиномонтаж" {
 		t.Fatalf("unexpected order: %s", got)
 	}
 
@@ -522,5 +527,22 @@ func TestInternalAPIIsOffWithoutKey(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("internal API must not be mounted without BOT_API_KEY, got %d", res.StatusCode)
+	}
+}
+
+func TestResetPasswordCommand(t *testing.T) {
+	a := setup(t)
+	ctx := context.Background()
+	tok := register(a, "owner@example.com")
+
+	password, err := app.ResetPassword(ctx, a.pool, " Owner@Example.com ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, a.do("GET", "/api/v1/me", tok, nil), 401, "session from before the reset")
+	expect(t, a.do("POST", "/api/v1/auth/login", "", map[string]string{"email": "owner@example.com", "password": "password123"}), 401, "old password")
+	expect(t, a.do("POST", "/api/v1/auth/login", "", map[string]string{"email": "owner@example.com", "password": password}), 200, "new password")
+	if _, err := app.ResetPassword(ctx, a.pool, "nobody@example.com"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("an unknown email must be reported, got %v", err)
 	}
 }

@@ -58,7 +58,7 @@ func Load() (Config, error) {
 		HTTPPort:        intVar("HTTP_PORT", 8080, &errs),
 		DatabaseURL:     required("DATABASE_URL", &errs),
 		JWTSecret:       required("JWT_SECRET", &errs),
-		JWTTTL:          durationVar("JWT_TTL", 24*time.Hour, &errs),
+		JWTTTL:          durationVar("JWT_TTL", 720*time.Hour, &errs),
 		TelegramAPIURL:  stringVar("TELEGRAM_API_URL", "https://api.telegram.org"),
 		ShutdownTimeout: durationVar("SHUTDOWN_TIMEOUT", 15*time.Second, &errs),
 		LogLevel:        logLevel(&errs),

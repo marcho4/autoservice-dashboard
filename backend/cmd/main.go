@@ -18,6 +18,8 @@ Commands:
                 spam adds 150 goroutines for 15 minutes
   bot           run only the Telegram bot runner
   migrate       apply pending database migrations
+  reset-password <email>
+                set a new random password for the employee, print it and sign out their sessions
   probe         run the black-box prober and expose its metrics
 `
 
@@ -40,6 +42,12 @@ func main() {
 		err = runBot(ctx)
 	case "migrate":
 		err = migrate(ctx)
+	case "reset-password":
+		if len(os.Args) != 3 {
+			fmt.Fprint(os.Stderr, usage)
+			os.Exit(2)
+		}
+		err = resetPassword(ctx, os.Args[2])
 	case "probe":
 		err = probe(ctx)
 	default:

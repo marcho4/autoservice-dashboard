@@ -197,7 +197,7 @@ func lowerFirst(s string) string {
 // so the bot can take requests right after the token is connected.
 func DefaultServices() []ServiceInput {
 	car := FormField{Label: "Автомобиль", Question: "Какой у вас автомобиль? Напишите марку, модель и год выпуска.", Type: FieldText, Required: true}
-	when := FormField{Label: "Удобное время", Question: "Когда вам удобно приехать?", Type: FieldText}
+	when := FormField{Label: "Удобное время", Question: "Когда вам было бы удобно приехать? Точное время мастер согласует с вами по телефону.", Type: FieldText}
 	services := []ServiceInput{
 		{
 			Name:        "Диагностика",
@@ -215,7 +215,6 @@ func DefaultServices() []ServiceInput {
 			Active:      true,
 			Fields: []FormField{
 				car,
-				{Label: "Пробег, км", Question: "Какой сейчас пробег, в километрах?", Type: FieldNumber},
 				{Label: "Что нужно сделать", Question: "Что нужно сделать? Например: замена масла и фильтров, плановое ТО.", Type: FieldText, Required: true},
 				when,
 			},
@@ -243,7 +242,7 @@ func DefaultServices() []ServiceInput {
 			},
 		},
 		{
-			Name:        "Другой вопрос",
+			Name:        "Вопрос мастеру",
 			Description: "Всё, что не подходит под остальные услуги: вопросы о ценах, сроках, наличии запчастей, графике работы.",
 			Active:      true,
 			Fields: []FormField{
