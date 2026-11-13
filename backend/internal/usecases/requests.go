@@ -2,7 +2,10 @@ package usecases
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/google/uuid"
 
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
@@ -58,8 +61,17 @@ func (s *DashboardService) ChangeStatus(ctx context.Context, employeeID, request
 	if err != nil {
 		return domain.RequestWithClient{}, err
 	}
+	countStatusChange(to)
+	if current.Status == domain.StatusNew {
+		// The product's promise in one number: how long a client waited for the first reaction of the master.
+		metrics.GetOrCreateHistogram("request_reaction_seconds").Update(time.Since(current.CreatedAt).Seconds())
+	}
 	current.Request = updated
 	return current, nil
+}
+
+func countStatusChange(to domain.RequestStatus) {
+	metrics.GetOrCreateCounter(fmt.Sprintf(`request_status_changes_total{to=%q}`, to)).Inc()
 }
 
 func (s *DashboardService) UpdateNote(ctx context.Context, employeeID, requestID uuid.UUID, note string) (domain.RequestWithClient, error) {

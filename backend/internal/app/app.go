@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -48,6 +49,7 @@ func NewRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) (http.Ha
 		BotAPIKey:   cfg.BotAPIKey,
 		Logger:      log,
 		Ready:       pool.Ping,
+		Stats:       func(ctx context.Context, w io.Writer) error { return postgres.WriteStats(ctx, pool, w) },
 	}), nil
 }
 

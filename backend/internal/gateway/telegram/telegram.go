@@ -79,7 +79,10 @@ func (c *Client) call(ctx context.Context, hc *http.Client, token, method string
 	return c.do(ctx, hc, token, method, payload, result)
 }
 
-func (c *Client) do(ctx context.Context, hc *http.Client, token, method string, payload, result any) error {
+func (c *Client) do(ctx context.Context, hc *http.Client, token, method string, payload, result any) (err error) {
+	defer func() {
+		metrics.GetOrCreateCounter(fmt.Sprintf(`telegram_requests_total{method=%q,ok="%t"}`, method, err == nil)).Inc()
+	}()
 	body := []byte("{}")
 	if payload != nil {
 		var err error

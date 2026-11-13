@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/google/uuid"
 
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
@@ -662,4 +663,59 @@ func TestUnsupportedMessageRepeatsTheQuestion(t *testing.T) {
 	d.send(Incoming{}).expect("Голосовые и фото я пока не принимаю", "Что нужно сделать?").expectButtons("Смена шин", "Балансировка")
 	d.click("Смена шин")
 	d.send(Incoming{}).expect("Голосовые и фото я пока не принимаю", "Оставьте номер телефона").expectButtons("📱 Отправить мой номер")
+}
+
+// counters reads the product counters; they are process-wide, so tests compare them before and after.
+func counters(names ...string) []uint64 {
+	values := make([]uint64, len(names))
+	for i, name := range names {
+		values[i] = metrics.GetOrCreateCounter(name).Get()
+	}
+	return values
+}
+
+func TestDialogFunnelIsCounted(t *testing.T) {
+	names := []string{
+		`bot_classified_total{result="recognized"}`,
+		`bot_classified_total{result="unknown"}`,
+		`bot_drafts_total{event="started"}`,
+		`bot_drafts_total{event="wrong_service"}`,
+		`bot_drafts_total{event="cancelled"}`,
+		`bot_drafts_total{event="submitted"}`,
+		`bot_form_fields_total{source="llm"}`,
+		`bot_form_fields_total{source="client"}`,
+	}
+	before := counters(names...)
+
+	recognize := true
+	d := newDialog(t, func(ExtractInput) (Extraction, error) {
+		if !recognize {
+			return Extraction{}, nil
+		}
+		return Extraction{ServiceID: oilService.ID, Values: map[string]string{"car": "Kia Rio"}}, nil
+	})
+	// First client: the LLM picks the wrong service, the client switches and cancels.
+	d.text("что-то стучит").click("Другая услуга").click("Шиномонтаж").text("отмена")
+	// Nothing to cancel any more: a second /cancel is not a second cancelled draft.
+	d.text("/cancel")
+	// Second client: the LLM does not understand, the client picks the service and goes to the end.
+	recognize = false
+	d.text("мне бы колёса").click("Шиномонтаж").click("Смена шин").text("+79001112233").click("✅ Отправить").expect("принята")
+
+	want := []uint64{
+		1, // recognized: "что-то стучит"
+		1, // unknown: "мне бы колёса"
+		2, // started: switching the service is not a new draft
+		1, // wrong_service
+		1, // cancelled
+		1, // submitted
+		1, // llm filled the car
+		1, // the client answered "Смена шин"; the phone is not a form field
+	}
+	after := counters(names...)
+	for i, name := range names {
+		if got := after[i] - before[i]; got != want[i] {
+			t.Errorf("%s grew by %d, want %d", name, got, want[i])
+		}
+	}
 }

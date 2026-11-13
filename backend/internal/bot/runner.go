@@ -96,6 +96,8 @@ func (r *Runner) Run(ctx context.Context) error {
 			break
 		}
 		r.log.Info("bot runner is the leader, starting bots")
+		leader := metrics.GetOrCreateGauge("bot_runner_leader", nil)
+		leader.Set(1)
 		leadCtx, cancel := context.WithCancel(ctx)
 		go func() {
 			select {
@@ -106,6 +108,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}()
 		r.supervise(leadCtx)
+		leader.Set(0)
 		cancel()
 		release()
 	}
@@ -377,6 +380,9 @@ func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, 
 
 	for _, m := range res.Messages {
 		err := r.tg.SendMessage(ctx, bot.Token, toTelegram(m))
+		if m.ChatID != in.ChatID {
+			metrics.GetOrCreateCounter(fmt.Sprintf(`bot_notifications_total{delivered="%t"}`, err == nil)).Inc()
+		}
 		if err == nil {
 			continue
 		}

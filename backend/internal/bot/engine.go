@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/VictoriaMetrics/metrics"
 	"github.com/google/uuid"
 
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
@@ -178,6 +179,9 @@ const (
 	editService = "service"
 )
 
+// count bumps a product counter. What each one answers is described in docs/DESIGN.md, section 10.
+func count(name string) { metrics.GetOrCreateCounter(name).Inc() }
+
 // Handle processes one update of a chat and returns what to send back. Updates of one chat must be handled sequentially.
 func (e *Engine) Handle(ctx context.Context, autoserviceID uuid.UUID, in Incoming) (Result, error) {
 	var st conversation
@@ -289,6 +293,9 @@ func (t *turn) onCommand() error {
 }
 
 func (t *turn) cancelDraft() {
+	if t.st.DraftID != uuid.Nil {
+		count(`bot_drafts_total{event="cancelled"}`)
+	}
 	t.reset()
 	t.say("Хорошо, заявку не отправляю. Если понадобится помощь — просто напишите.").RemoveKeyboard = true
 }
@@ -372,6 +379,7 @@ func (t *turn) classify(text string) error {
 	}
 	for _, svc := range services {
 		if understood && svc.ID == ext.ServiceID {
+			count(`bot_classified_total{result="recognized"}`)
 			if err := t.startForm(svc, ext); err != nil {
 				return err
 			}
@@ -382,6 +390,11 @@ func (t *turn) classify(text string) error {
 			}
 			return nil
 		}
+	}
+	if !understood {
+		count(`bot_classified_total{result="unavailable"}`)
+	} else {
+		count(`bot_classified_total{result="unknown"}`)
 	}
 	if !understood && len(services) == 1 {
 		return t.startForm(services[0], Extraction{})
@@ -440,6 +453,10 @@ func (t *turn) askService(services []domain.Service, text string) {
 }
 
 func (t *turn) startForm(svc domain.Service, ext Extraction) error {
+	// Picking another service restarts the form but is still the same attempt of the client.
+	if t.st.DraftID == uuid.Nil {
+		count(`bot_drafts_total{event="started"}`)
+	}
 	t.st.DraftID = uuid.New()
 	t.st.ServiceID = svc.ID
 	t.st.Values = map[string]string{}
@@ -457,6 +474,7 @@ func (t *turn) startForm(svc domain.Service, ext Extraction) error {
 			t.st.Phone = phone
 		}
 	}
+	metrics.GetOrCreateCounter(`bot_form_fields_total{source="llm"}`).Add(len(t.st.Values))
 	return t.advance(svc, fmt.Sprintf("Оформляю заявку: <b>%s</b>.", esc(svc.Name)))
 }
 
@@ -542,6 +560,7 @@ func (t *turn) setValue(f domain.FormField, value string) {
 	}
 	t.st.Values[f.ID] = value
 	delete(t.st.Skipped, f.ID)
+	count(`bot_form_fields_total{source="client"}`)
 }
 
 func (t *turn) askPhone(intro string) error {
@@ -654,6 +673,7 @@ func (t *turn) submit() error {
 	if err != nil {
 		return err
 	}
+	count(`bot_drafts_total{event="submitted"}`)
 	t.reset()
 	t.say(fmt.Sprintf("✅ Заявка №%d принята!\n\nМастер свяжется с вами по номеру %s, как только освободится.\n\n"+
 		"Ваши заявки — /my. Чтобы оставить ещё одну, просто напишите, что нужно.",
@@ -861,6 +881,7 @@ func (t *turn) onCallback() error {
 		return nil
 
 	case cbOther:
+		count(`bot_drafts_total{event="wrong_service"}`)
 		t.res.ClearButtons = true
 		services, err := t.e.backend.ActiveServices(t.ctx, t.autoserviceID)
 		if err != nil {

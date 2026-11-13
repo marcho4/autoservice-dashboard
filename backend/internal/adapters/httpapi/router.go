@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -33,6 +34,8 @@ type Deps struct {
 	BotAPIKey string
 	Logger    *slog.Logger
 	Ready     func(ctx context.Context) error
+	// Stats appends the gauges that are read from the database to a metrics scrape.
+	Stats func(ctx context.Context, w io.Writer) error
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -68,6 +71,10 @@ func NewRouter(d Deps) http.Handler {
 	})
 	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		metrics.WritePrometheus(w, true)
+		// Process metrics must stay available when the database is not.
+		if err := d.Stats(r.Context(), w); err != nil {
+			logger(r).Warn("database gauges are missing from the scrape", "error", err)
+		}
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {

@@ -152,7 +152,11 @@ func (s *BotRunnerService) CancelClientRequest(ctx context.Context, autoserviceI
 	if !domain.CanTransition(current.Status, domain.StatusCancelled, domain.ActorClient) {
 		return domain.Request{}, domain.ErrRequestNotEditable
 	}
-	return s.requests.UpdateStatus(ctx, current.AutoserviceID, current.ID, current.Status, domain.StatusCancelled)
+	cancelled, err := s.requests.UpdateStatus(ctx, current.AutoserviceID, current.ID, current.Status, domain.StatusCancelled)
+	if err == nil {
+		countStatusChange(domain.StatusCancelled)
+	}
+	return cancelled, err
 }
 
 // LinkRecipient subscribes a Telegram chat to new-request notifications if the code from the deep link is the current one.

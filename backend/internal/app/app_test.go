@@ -546,3 +546,67 @@ func TestResetPasswordCommand(t *testing.T) {
 		t.Fatalf("an unknown email must be reported, got %v", err)
 	}
 }
+
+// scrape returns the value of one series from GET /metrics, or -1 if the series is not there.
+func scrape(a *api, series string) float64 {
+	a.t.Helper()
+	res, err := http.Get(a.srv.URL + "/metrics")
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	for _, line := range strings.Split(string(body), "\n") {
+		if value, ok := strings.CutPrefix(line, series+" "); ok {
+			var v float64
+			fmt.Sscan(value, &v)
+			return v
+		}
+	}
+	return -1
+}
+
+func TestMetricsShowProductState(t *testing.T) {
+	a := setup(t)
+	expectSeries := func(series string, want float64) {
+		t.Helper()
+		if got := scrape(a, series); got != want {
+			t.Errorf("%s = %v, want %v", series, got, want)
+		}
+	}
+
+	// Two autoservices are registered, one connected a bot and got requests.
+	tok := register(a, "owner@example.com")
+	expect(t, a.do("POST", "/api/v1/autoservice", tok, map[string]string{"name": "Гараж"}), 201, "create autoservice")
+	expect(t, a.do("POST", "/api/v1/autoservice", register(a, "idle@example.com"), map[string]string{"name": "Пустой"}), 201, "second autoservice")
+	expect(t, a.do("PUT", "/api/v1/autoservice/bot", tok, map[string]string{"token": tokenA}), 200, "connect bot")
+	newReq := func() string {
+		r := a.runner("POST", "/bots/111111/requests", map[string]any{
+			"client": map[string]any{"telegram_id": 42}, "service_name": "Диагностика", "phone": "+79001112233"})
+		expect(t, r, 201, "create request")
+		return r.body["id"].(string)
+	}
+	taken, waiting := newReq(), newReq()
+	newReq()
+	if _, err := a.pool.Exec(context.Background(),
+		`UPDATE requests SET created_at = now() - interval '2 days' WHERE id = $1`, waiting); err != nil {
+		t.Fatal(err)
+	}
+
+	reactions := scrape(a, "request_reaction_seconds_count")
+	taking := scrape(a, `request_status_changes_total{to="in_progress"}`)
+	expect(t, a.do("POST", "/api/v1/requests/"+taken+"/take", tok, nil), 200, "take")
+
+	expectSeries(`autoservices{stage="registered"}`, 2)
+	expectSeries(`autoservices{stage="bot_connected"}`, 1)
+	expectSeries(`autoservices{stage="notifications_on"}`, 0)
+	expectSeries(`autoservices{stage="has_requests"}`, 1)
+	expectSeries(`bots_by_status{status="pending",reason=""}`, 1)
+	expectSeries(`requests_by_status{status="new"}`, 2)
+	expectSeries(`requests_by_status{status="in_progress"}`, 1)
+	expectSeries(`requests_by_status{status="closed"}`, 0)
+	expectSeries(`requests_overdue`, 1)
+	// The first reaction of the master is measured once per request; counters are process-wide, hence the deltas.
+	expectSeries(`request_status_changes_total{to="in_progress"}`, max(taking, 0)+1)
+	expectSeries("request_reaction_seconds_count", max(reactions, 0)+1)
+}

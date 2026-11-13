@@ -61,6 +61,10 @@ type chatResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 // statusError carries only the status: the provider's error body may echo the prompt with client data.
@@ -115,6 +119,8 @@ func (c *Client) send(ctx context.Context, system, user string, jsonMode bool) (
 	if err := json.Unmarshal(data, &parsed); err != nil || len(parsed.Choices) == 0 {
 		return "", errors.New("llm: unexpected response shape")
 	}
+	metrics.GetOrCreateCounter(`llm_tokens_total{kind="prompt"}`).Add(parsed.Usage.PromptTokens)
+	metrics.GetOrCreateCounter(`llm_tokens_total{kind="completion"}`).Add(parsed.Usage.CompletionTokens)
 	return parsed.Choices[0].Message.Content, nil
 }
 
