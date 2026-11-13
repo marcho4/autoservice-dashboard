@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Alert, Card, Loading, PageTitle, StatusBadge } from "@/components/ui";
-import { answersDigest, api, Client, errorText, formatDate, formatPhone, ServiceRequest } from "@/lib/api";
+import { Alert, CallButton, Card, Fact, listClass, Loading, PageTitle, StatusBadge, When } from "@/components/ui";
+import { answersDigest, api, Client, errorText, requestsCount, ServiceRequest } from "@/lib/api";
 
 type ClientDetails = Client & { requests: ServiceRequest[] };
 
@@ -19,50 +19,41 @@ export default function ClientPage() {
 
   if (!client) return error ? <Alert>{error}</Alert> : <Loading />;
 
+  const name = client.name || "Клиент без имени";
   return (
     <>
-      <Link href="/clients" className="text-sm text-zinc-600 hover:text-zinc-900">
-        ← Все клиенты
-      </Link>
-      <PageTitle>{client.name || "Клиент без имени"}</PageTitle>
+      <PageTitle back={{ href: "/clients", label: "Все клиенты" }}>{name}</PageTitle>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card title="Контакты">
-          <dl className="space-y-3 text-sm">
-            <div>
-              <dt className="text-zinc-500">Телефон</dt>
-              <dd className="font-medium">{client.phone ? formatPhone(client.phone) : "—"}</dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Telegram</dt>
-              <dd>{client.telegram_username ? `@${client.telegram_username}` : `ID ${client.telegram_id}`}</dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Клиент с</dt>
-              <dd>{formatDate(client.created_at)}</dd>
-            </div>
+      <div className="grid items-start gap-4 lg:grid-cols-3 lg:gap-6">
+        <Card>
+          {client.phone && <CallButton large phone={client.phone} name={name} className="mb-4 w-full justify-start" />}
+          <dl className="space-y-3">
+            {!client.phone && <Fact label="Телефон">—</Fact>}
+            <Fact label="Telegram">{client.telegram_username ? `@${client.telegram_username}` : "—"}</Fact>
+            <Fact label="Первое обращение">
+              <When iso={client.created_at} />
+            </Fact>
           </dl>
         </Card>
 
-        <div className="lg:col-span-2">
-          <Card title={`Заявки (${client.requests.length})`}>
-            <ul className="divide-y divide-zinc-100">
-              {client.requests.map((r) => (
-                <li key={r.id}>
-                  <Link href={`/requests/${r.id}`} className="flex items-center justify-between gap-4 py-3 hover:bg-zinc-50">
-                    <div className="min-w-0">
-                      <div className="font-medium">
-                        №{r.number} · {r.service_name}
-                      </div>
-                      <div className="truncate text-sm text-zinc-600">{answersDigest(r)}</div>
-                      <div className="text-xs text-zinc-500">{formatDate(r.created_at)}</div>
+        <div className="min-w-0 lg:col-span-2">
+          <h2 className="mb-2 text-heading">{requestsCount(client.requests.length)}</h2>
+          <ul className={listClass}>
+            {client.requests.map((r) => (
+              <li key={r.id}>
+                <Link href={`/requests/${r.id}`} className="flex items-start justify-between gap-4 px-4 py-3 hover:bg-paper active:bg-paper sm:px-5">
+                  <div className="min-w-0">
+                    <div className="font-medium">
+                      {r.service_name} <span className="text-meta font-normal text-ink-3 tabular-nums">№{r.number}</span>
                     </div>
-                    <StatusBadge status={r.status} />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </Card>
+                    <div className="line-clamp-2 text-ink-2 sm:line-clamp-1">{answersDigest(r)}</div>
+                    <When iso={r.created_at} className="text-meta text-ink-3" />
+                  </div>
+                  <StatusBadge status={r.status} />
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </>

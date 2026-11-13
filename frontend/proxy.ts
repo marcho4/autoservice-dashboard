@@ -9,7 +9,11 @@ export function proxy(req: NextRequest) {
   const isPublic = PUBLIC_PAGES.includes(req.nextUrl.pathname);
 
   if (!hasSession && !isPublic) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    // Remember where the guest was going: the login form returns there (it validates the path itself).
+    const login = new URL("/login", req.url);
+    const next = req.nextUrl.pathname + req.nextUrl.search;
+    if (next !== "/") login.searchParams.set("next", next);
+    return NextResponse.redirect(login);
   }
   if (hasSession && (isPublic || req.nextUrl.pathname === "/")) {
     return NextResponse.redirect(new URL("/requests", req.url));

@@ -2,8 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-import { Alert, Button, Card, Field, Loading, PageTitle } from "@/components/ui";
-import { api, Employee, errorText, formatDate } from "@/lib/api";
+import { Alert, Button, Card, Field, Loading, PageTitle, When } from "@/components/ui";
+import { api, Employee, errorText } from "@/lib/api";
 
 type Status = { kind: "error" | "success"; text: string } | null;
 
@@ -71,12 +71,14 @@ export default function AccountPage() {
   return (
     <>
       <PageTitle>Аккаунт</PageTitle>
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid items-start gap-4 sm:gap-6 lg:grid-cols-2">
         <Card title="Профиль">
           <form key={me.updated_at} onSubmit={saveProfile} className="space-y-4">
             <Field label="Имя" name="full_name" required defaultValue={me.full_name} />
             <Field label="Email" name="email" type="email" required defaultValue={me.email} />
-            <p className="text-xs text-zinc-500">Зарегистрирован {formatDate(me.created_at)}</p>
+            <p className="text-meta text-ink-3">
+              Зарегистрирован <When iso={me.created_at} />
+            </p>
             {profileStatus && <Alert kind={profileStatus.kind}>{profileStatus.text}</Alert>}
             <Button type="submit" disabled={busy}>
               Сохранить
@@ -90,7 +92,7 @@ export default function AccountPage() {
             <Field label="Новый пароль" name="new_password" type="password" required minLength={8} autoComplete="new-password" />
             <Field label="Повторите новый пароль" name="repeat_password" type="password" required minLength={8} autoComplete="new-password" />
             {passwordStatus && <Alert kind={passwordStatus.kind}>{passwordStatus.text}</Alert>}
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" variant="secondary" disabled={busy}>
               Сменить пароль
             </Button>
           </form>
@@ -99,14 +101,14 @@ export default function AccountPage() {
         <div className="lg:col-span-2">
           <Card title="Удаление аккаунта">
             <form onSubmit={deleteAccount} className="space-y-4">
-              <p className="text-sm text-zinc-600">
+              <p className="max-w-[65ch] text-ink-2">
                 Аккаунт будет удалён безвозвратно вместе с автосервисом, его заявками, клиентами и подключённым ботом.
               </p>
               <div className="max-w-sm">
                 <Field label="Введите пароль для подтверждения" name="password" type="password" required autoComplete="current-password" />
               </div>
               {deleteStatus && <Alert kind={deleteStatus.kind}>{deleteStatus.text}</Alert>}
-              <Button type="submit" variant="danger" disabled={busy}>
+              <Button type="submit" variant="dangerSolid" disabled={busy}>
                 Удалить аккаунт
               </Button>
             </form>

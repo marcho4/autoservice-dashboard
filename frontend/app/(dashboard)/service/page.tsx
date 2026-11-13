@@ -2,10 +2,10 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import ConfirmButton from "@/components/ConfirmButton";
-import { BotStatusBadge, botErrorText } from "@/components/BotStatus";
+import { BotStatusBadge, botErrorText, clientInvite } from "@/components/BotStatus";
 import BotTokenForm from "@/components/BotTokenForm";
-import { Alert, Button, Card, Field, Loading, PageTitle, TextArea } from "@/components/ui";
-import { api, ApiError, Autoservice, errorText, formatDate } from "@/lib/api";
+import { Actions, Alert, Button, buttonClass, Card, CopyButton, Fact, Field, Loading, PageTitle, TextArea, textLinkClass, When } from "@/components/ui";
+import { api, ApiError, Autoservice, errorText } from "@/lib/api";
 import { useBot } from "@/lib/useBot";
 
 type Status = { kind: "error" | "success"; text: string } | null;
@@ -69,8 +69,8 @@ export default function ServicePage() {
 
   return (
     <>
-      <PageTitle>{service ? "Мой автосервис" : "Регистрация автосервиса"}</PageTitle>
-      <div className="space-y-6">
+      <PageTitle>{service ? "Автосервис и бот" : "Регистрация автосервиса"}</PageTitle>
+      <div className="space-y-4 sm:space-y-6">
         {status && <Alert kind={status.kind}>{status.text}</Alert>}
 
         <Card title="Данные автосервиса">
@@ -83,34 +83,35 @@ export default function ServicePage() {
             <div className="sm:col-span-2">
               <TextArea label="Описание" name="description" defaultValue={service?.description} />
             </div>
-            <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
+            <div className="sm:col-span-2">
               <Button type="submit" disabled={busy}>
                 {service ? "Сохранить" : "Зарегистрировать"}
               </Button>
-              {service && (
-                <ConfirmButton
-                  label="Удалить автосервис"
-                  confirmLabel="Да, удалить всё: заявки, клиентов и бота"
-                  onConfirm={remove}
-                  disabled={busy}
-                />
-              )}
             </div>
           </form>
         </Card>
 
-        {service && <BotCard key={service.id} />}
+        {service && <BotCard key={service.id} serviceName={service.name} />}
+
+        {/* Away from "Сохранить": deleting everything is not the neighbour of an everyday action. */}
+        {service && (
+          <Card title="Удаление автосервиса">
+            <p className="mb-4 max-w-[65ch] text-ink-2">
+              Автосервис будет удалён безвозвратно вместе с заявками, клиентами и подключённым ботом. Аккаунт останется.
+            </p>
+            <ConfirmButton label="Удалить автосервис" confirmLabel="Да, удалить всё: заявки, клиентов и бота" onConfirm={remove} disabled={busy} />
+          </Card>
+        )}
       </div>
     </>
   );
 }
 
-function BotCard() {
+function BotCard({ serviceName }: { serviceName: string }) {
   const { bot, setBot, error, reload } = useBot(4000);
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState<Status>(null);
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   async function run(action: () => Promise<void>, success: string) {
     setBusy(true);
@@ -137,12 +138,6 @@ function BotCard() {
       await reload();
     }, "Уведомления для этого чата отключены");
 
-  async function copyLink(link: string) {
-    await navigator.clipboard.writeText(link).catch(() => undefined);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
   return (
     <>
       <Card title="Telegram-бот" actions={bot ? <BotStatusBadge bot={bot} /> : undefined}>
@@ -153,30 +148,25 @@ function BotCard() {
           {bot?.status === "error" && <Alert>{botErrorText(bot)}</Alert>}
 
           {bot && (
-            <dl className="grid gap-4 text-sm sm:grid-cols-3">
-              <div>
-                <dt className="text-zinc-500">Бот</dt>
-                <dd>
-                  <a className="font-medium underline" href={bot.link} target="_blank" rel="noreferrer">
-                    @{bot.username}
-                  </a>
-                </dd>
-              </div>
-              <div>
-                <dt className="text-zinc-500">Токен</dt>
-                <dd className="font-mono">{bot.masked_token}</dd>
-              </div>
-              <div>
-                <dt className="text-zinc-500">Подключён</dt>
-                <dd>{formatDate(bot.connected_at)}</dd>
-              </div>
+            <dl className="grid gap-4 sm:grid-cols-3">
+              <Fact label="Бот">
+                <a className={textLinkClass} href={bot.link} target="_blank" rel="noreferrer">
+                  @{bot.username}
+                </a>
+              </Fact>
+              <Fact label="Токен">
+                <span className="font-mono">{bot.masked_token}</span>
+              </Fact>
+              <Fact label="Подключён">
+                <When iso={bot.connected_at} />
+              </Fact>
             </dl>
           )}
 
           {bot === null && (
-            <p className="text-sm text-zinc-600">
+            <p className="max-w-[65ch] text-ink-2">
               Создайте бота в{" "}
-              <a className="font-medium text-zinc-900 underline" href="https://t.me/BotFather" target="_blank" rel="noreferrer">
+              <a className={textLinkClass} href="https://t.me/BotFather" target="_blank" rel="noreferrer">
                 @BotFather
               </a>{" "}
               командой /newbot и вставьте его токен. Бот запустится сам и начнёт принимать заявки.
@@ -197,49 +187,46 @@ function BotCard() {
           )}
 
           {bot && !editing && (
-            <div className="flex flex-wrap gap-2">
+            <Actions>
+              <CopyButton text={clientInvite(serviceName, bot)}>Скопировать ссылку для клиентов</CopyButton>
               <Button variant="secondary" onClick={() => setEditing(true)}>
                 Заменить токен
               </Button>
               <ConfirmButton label="Отключить бота" confirmLabel="Да, отключить" onConfirm={disconnect} disabled={busy} />
-            </div>
+            </Actions>
           )}
         </div>
       </Card>
 
       {bot && (
         <Card title="Уведомления о новых заявках">
-          <div className="space-y-4 text-sm">
-            <p className="text-zinc-600">
+          <div className="space-y-4">
+            <p className="max-w-[65ch] text-ink-2">
               Бот может присылать каждую новую заявку мастеру в Telegram. Откройте ссылку на телефоне мастера и нажмите
               «Запустить». Ссылка одноразовая: для следующего человека появится новая.
             </p>
-            <div className="flex flex-wrap gap-2">
-              <a
-                href={bot.notify_link}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 font-medium text-white hover:bg-zinc-700"
-              >
-                Подключить мой Telegram
+            <Actions>
+              <a href={bot.notify_link} target="_blank" rel="noreferrer" className={buttonClass({ variant: bot.recipients.length > 0 ? "secondary" : "primary" })}>
+                Подключить уведомления
               </a>
-              <Button variant="secondary" onClick={() => copyLink(bot.notify_link)}>
-                {copied ? "Скопировано" : "Скопировать ссылку"}
-              </Button>
-            </div>
+              <CopyButton text={bot.notify_link}>Скопировать ссылку</CopyButton>
+            </Actions>
             {bot.recipients.length === 0 ? (
-              <p className="text-zinc-500">Пока никто не подключён — заявки видны только в этом кабинете.</p>
+              <p className="font-medium">Пока никто не подключён — заявки видны только в этом кабинете.</p>
             ) : (
-              <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200">
+              <ul className="divide-y divide-line rounded-control border border-line">
                 {bot.recipients.map((r) => (
-                  <li key={r.chat_id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
+                  <li key={r.chat_id} className="flex flex-wrap items-center justify-between gap-x-3 py-1 pr-1 pl-3">
                     <span>
                       <span className="font-medium">{r.name || `Чат ${r.chat_id}`}</span>
-                      <span className="text-zinc-500"> · с {formatDate(r.created_at)}</span>
+                      <span className="text-ink-3">
+                        {" "}
+                        · подключён <When iso={r.created_at} />
+                      </span>
                     </span>
-                    <button className="text-red-700 hover:underline" disabled={busy} onClick={() => removeRecipient(r.chat_id)}>
+                    <Button variant="danger" size="sm" disabled={busy} onClick={() => removeRecipient(r.chat_id)}>
                       Отключить
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>

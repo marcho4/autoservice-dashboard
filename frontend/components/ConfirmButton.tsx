@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui";
 
-// Two-step destructive button: first click asks for confirmation inline.
+// Two-step destructive button: a quiet first step, so a slip of the finger costs nothing,
+// and a solid red one only when the question is asked. Focus lands on the safe answer.
 export default function ConfirmButton({
   label,
   confirmLabel,
@@ -27,7 +28,7 @@ export default function ConfirmButton({
     <span className="inline-flex flex-wrap gap-2">
       <Button
         type="button"
-        variant="danger"
+        variant="dangerSolid"
         disabled={disabled}
         onClick={() => {
           setAsking(false);
@@ -36,7 +37,7 @@ export default function ConfirmButton({
       >
         {confirmLabel}
       </Button>
-      <Button type="button" variant="secondary" onClick={() => setAsking(false)}>
+      <Button type="button" variant="ghost" autoFocus onClick={() => setAsking(false)}>
         Отмена
       </Button>
     </span>

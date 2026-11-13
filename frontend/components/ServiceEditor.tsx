@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import ConfirmButton from "@/components/ConfirmButton";
-import { Alert, Button, Field } from "@/components/ui";
+import { Alert, Button, Field, Icon, IconButton, Select, TextArea } from "@/components/ui";
 import { FieldType, Service, ServiceInput } from "@/lib/api";
 
 type DraftField = {
@@ -21,8 +21,15 @@ const TYPE_LABELS: Record<FieldType, string> = {
   choice: "Выбор из вариантов",
 };
 
-const inputClass =
-  "w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900";
+const MIN_OPTIONS = 2;
+const MAX_OPTIONS = 10;
+
+function parseOptions(text: string): string[] {
+  return text
+    .split("\n")
+    .map((o) => o.trim())
+    .filter(Boolean);
+}
 
 let draftSeq = 0;
 
@@ -91,13 +98,7 @@ export default function ServiceEditor({
           question: f.question,
           type: f.type,
           required: f.required,
-          options:
-            f.type === "choice"
-              ? f.optionsText
-                  .split("\n")
-                  .map((o) => o.trim())
-                  .filter(Boolean)
-              : [],
+          options: f.type === "choice" ? parseOptions(f.optionsText) : [],
         })),
       }),
     );
@@ -118,94 +119,95 @@ export default function ServiceEditor({
       </div>
 
       <div>
-        <div className="mb-2 text-sm font-medium text-zinc-700">Что бот спросит у клиента</div>
-        <div className="space-y-3">
+        <h3 className="mb-2 font-semibold">Что бот спросит у клиента</h3>
+        <div className="space-y-2">
           {fields.length === 0 && (
-            <p className="rounded-md border border-dashed border-zinc-300 px-4 py-3 text-sm text-zinc-500">
+            <p className="rounded-control border border-dashed border-line-strong px-4 py-3 text-ink-2">
               Вопросов нет — бот запишет услугу и сразу спросит телефон.
             </p>
           )}
-          {fields.map((f, i) => (
-            <div key={f.key} className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-              <div className="flex flex-wrap items-end gap-3">
-                <label className="min-w-40 flex-1">
-                  <span className="mb-1 block text-xs font-medium text-zinc-600">Название поля в заявке</span>
-                  <input
-                    className={inputClass}
+          {fields.map((f, i) => {
+            const optionCount = parseOptions(f.optionsText).length;
+            const optionsInvalid = optionCount < MIN_OPTIONS || optionCount > MAX_OPTIONS;
+            return (
+              <div key={f.key} role="group" aria-label={`Вопрос ${i + 1}`} className="space-y-3 rounded-control border border-line bg-paper p-3 sm:p-4">
+                <div className="flex items-center gap-2">
+                  <span className="mr-auto text-meta font-semibold text-ink-2">Вопрос {i + 1}</span>
+                  <IconButton label="Выше" disabled={i === 0} onClick={() => move(i, -1)}>
+                    <Icon name="up" />
+                  </IconButton>
+                  <IconButton label="Ниже" disabled={i === fields.length - 1} onClick={() => move(i, 1)}>
+                    <Icon name="down" />
+                  </IconButton>
+                  {/* Kept apart from the arrows: a miss must not delete the question. */}
+                  <IconButton label="Удалить вопрос" className="ml-3" onClick={() => setFields((list) => list.filter((x) => x.key !== f.key))}>
+                    <Icon name="close" />
+                  </IconButton>
+                </div>
+                <div className="grid items-end gap-3 sm:grid-cols-[1fr_auto_auto]">
+                  <Field
+                    label="Название поля в заявке"
                     value={f.label}
                     required
                     maxLength={60}
                     placeholder="Автомобиль"
                     onChange={(e) => patch(f.key, { label: e.target.value })}
                   />
-                </label>
-                <label>
-                  <span className="mb-1 block text-xs font-medium text-zinc-600">Ответ</span>
-                  <select className={inputClass} value={f.type} onChange={(e) => patch(f.key, { type: e.target.value as FieldType })}>
+                  <Select label="Ответ" value={f.type} onChange={(e) => patch(f.key, { type: e.target.value as FieldType })}>
                     {Object.entries(TYPE_LABELS).map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}
                       </option>
                     ))}
-                  </select>
-                </label>
-                <label className="flex items-center gap-2 pb-2 text-sm text-zinc-700">
-                  <input type="checkbox" checked={f.required} onChange={(e) => patch(f.key, { required: e.target.checked })} />
-                  Обязательно
-                </label>
-                <div className="flex gap-1 pb-0.5">
-                  <IconButton label="Выше" disabled={i === 0} onClick={() => move(i, -1)}>
-                    ↑
-                  </IconButton>
-                  <IconButton label="Ниже" disabled={i === fields.length - 1} onClick={() => move(i, 1)}>
-                    ↓
-                  </IconButton>
-                  <IconButton label="Удалить поле" onClick={() => setFields((list) => list.filter((x) => x.key !== f.key))}>
-                    ✕
-                  </IconButton>
+                  </Select>
+                  <label className="flex min-h-control items-center gap-2.5">
+                    <input
+                      type="checkbox"
+                      className="size-5 accent-ink"
+                      checked={f.required}
+                      onChange={(e) => patch(f.key, { required: e.target.checked })}
+                    />
+                    Обязательно
+                  </label>
                 </div>
-              </div>
-              <label className="mt-3 block">
-                <span className="mb-1 block text-xs font-medium text-zinc-600">Вопрос бота</span>
-                <input
-                  className={inputClass}
+                <Field
+                  label="Вопрос бота"
                   value={f.question}
                   maxLength={300}
                   placeholder={f.label ? `Укажите: ${f.label.charAt(0).toLowerCase()}${f.label.slice(1)}` : "Какой у вас автомобиль?"}
                   onChange={(e) => patch(f.key, { question: e.target.value })}
                 />
-              </label>
-              {f.type === "choice" && (
-                <label className="mt-3 block">
-                  <span className="mb-1 block text-xs font-medium text-zinc-600">Варианты ответа — по одному в строке, от 2 до 10</span>
-                  <textarea
-                    className={inputClass}
+                {f.type === "choice" && (
+                  <TextArea
+                    label="Варианты ответа — по одному в строке"
                     rows={Math.max(3, f.optionsText.split("\n").length)}
                     value={f.optionsText}
                     required
                     placeholder={"Сезонная смена шин\nРемонт прокола"}
+                    invalid={optionsInvalid}
+                    hint={`Вариантов: ${optionCount} — нужно от ${MIN_OPTIONS} до ${MAX_OPTIONS}`}
                     onChange={(e) => patch(f.key, { optionsText: e.target.value })}
                   />
-                </label>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
           <Button type="button" variant="secondary" onClick={addField} disabled={fields.length >= 15}>
-            + Добавить вопрос
+            Добавить вопрос
           </Button>
-          <span className="text-xs text-zinc-500">Телефон бот спрашивает всегда — добавлять его не нужно.</span>
+          <span className="text-meta text-ink-3">Телефон бот спрашивает всегда — добавлять его не нужно.</span>
         </div>
       </div>
 
       {error && <Alert>{error}</Alert>}
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-4">
+      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-4">
         <Button type="submit" disabled={busy}>
           {service ? "Сохранить" : "Добавить услугу"}
         </Button>
-        <Button type="button" variant="secondary" onClick={onCancel}>
+        <Button type="button" variant="ghost" onClick={onCancel}>
           Отмена
         </Button>
         {onDelete && (
@@ -215,23 +217,5 @@ export default function ServiceEditor({
         )}
       </div>
     </form>
-  );
-}
-
-function IconButton({
-  label,
-  children,
-  ...props
-}: { label: string; children: React.ReactNode } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      className="h-9 w-9 rounded-md border border-zinc-300 bg-white text-sm text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
-      {...props}
-    >
-      {children}
-    </button>
   );
 }

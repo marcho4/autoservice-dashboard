@@ -3,22 +3,27 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Loading, PageTitle, StatusBadge } from "@/components/ui";
-import { api, clientName, errorText, formatDate, formatPhone, RequestWithClient, telHref } from "@/lib/api";
+import ConfirmButton from "@/components/ConfirmButton";
+import { Alert, Button, CallButton, Card, Fact, linkClass, Loading, PageTitle, StatusBadge, TextArea, When } from "@/components/ui";
+import { api, clientName, errorText, RequestWithClient, STATUS_LABELS } from "@/lib/api";
+
+type Action = "take" | "reject" | "close" | "note";
 
 export default function RequestPage() {
   const { id } = useParams<{ id: string }>();
   const [req, setReq] = useState<RequestWithClient | null>(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  // The action in flight: its button says what is happening, the rest wait.
+  const [busy, setBusy] = useState<Action | "">("");
   const [note, setNote] = useState<string | null>(null);
+  const [noteSaved, setNoteSaved] = useState(false);
 
   useEffect(() => {
     api.get<RequestWithClient>(`requests/${id}`).then(setReq).catch((e) => setError(errorText(e)));
   }, [id]);
 
-  async function run(call: () => Promise<RequestWithClient>) {
-    setBusy(true);
+  async function run(action: Action, call: () => Promise<RequestWithClient>) {
+    setBusy(action);
     setError("");
     try {
       setReq(await call());
@@ -27,14 +32,17 @@ export default function RequestPage() {
       setError(errorText(e));
       return false;
     } finally {
-      setBusy(false);
+      setBusy("");
     }
   }
 
-  const act = (action: "take" | "reject" | "close") => run(() => api.post<RequestWithClient>(`requests/${id}/${action}`));
+  const act = (action: "take" | "reject" | "close") => run(action, () => api.post<RequestWithClient>(`requests/${id}/${action}`));
 
   async function saveNote() {
-    if (await run(() => api.put<RequestWithClient>(`requests/${id}/note`, { note }))) setNote(null);
+    if (await run("note", () => api.put<RequestWithClient>(`requests/${id}/note`, { note }))) {
+      setNote(null);
+      setNoteSaved(true);
+    }
   }
 
   if (!req) {
@@ -45,11 +53,18 @@ export default function RequestPage() {
   const noteValue = note ?? req.note;
   return (
     <>
-      <Link href="/requests" className="text-sm text-zinc-600 hover:text-zinc-900">
-        ← Все заявки
-      </Link>
-      <PageTitle actions={<StatusBadge status={req.status} />}>
-        Заявка №{req.number} · {req.service_name}
+      <PageTitle
+        back={{ href: "/requests", label: "Все заявки" }}
+        lead={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta">
+            <StatusBadge status={req.status} />
+            <span className="tabular-nums">Заявка №{req.number}</span>
+            <span aria-hidden="true">·</span>
+            <When iso={req.created_at} />
+          </span>
+        }
+      >
+        {req.service_name}
       </PageTitle>
 
       {error && (
@@ -58,101 +73,87 @@ export default function RequestPage() {
         </div>
       )}
 
-      <div className="grid items-start gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <Card title="Что нужно клиенту">
-            <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-              <div>
-                <dt className="text-zinc-500">Услуга</dt>
-                <dd className="font-medium">{req.service_name}</dd>
-              </div>
-              {req.answers.map((a, i) => (
-                <div key={i}>
-                  <dt className="text-zinc-500">{a.label}</dt>
-                  <dd className="whitespace-pre-wrap font-medium">{a.value}</dd>
-                </div>
-              ))}
-            </dl>
-            {req.message && (
-              <figure className="mt-5 border-l-2 border-zinc-200 pl-4 text-sm">
-                <figcaption className="text-zinc-500">Первое сообщение клиента</figcaption>
-                <blockquote className="mt-1 whitespace-pre-wrap text-zinc-700">{req.message}</blockquote>
-              </figure>
+      <div className="grid items-start gap-4 lg:grid-cols-3 lg:gap-6">
+        {/* First in the markup, so on a phone the call and the actions sit right under the title. */}
+        <Card className="lg:sticky lg:top-6 lg:col-start-3 lg:row-start-1">
+          <h2 className="text-heading">{clientName(c)}</h2>
+          <CallButton large phone={req.phone} name={clientName(c)} className="mt-3 w-full justify-start" />
+          <p className="mt-2 flex flex-wrap items-center gap-x-4">
+            {c.telegram_username && (
+              <a className={linkClass} href={`https://t.me/${c.telegram_username}`} target="_blank" rel="noreferrer">
+                @{c.telegram_username} в Telegram
+              </a>
             )}
-            <p className="mt-5 text-xs text-zinc-500">
-              Создана {formatDate(req.created_at)} · обновлена {formatDate(req.updated_at)}
-            </p>
-          </Card>
+            <Link href={`/clients/${c.id}`} className={linkClass}>
+              Все заявки клиента
+            </Link>
+          </p>
 
-          <Card title="Действия">
+          <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
             {req.status === "new" && (
-              <div className="flex flex-wrap gap-2">
-                <Button variant="success" disabled={busy} onClick={() => act("take")}>
-                  Взять в работу
+              <>
+                <Button variant="secondary" className="flex-1" disabled={busy !== ""} onClick={() => act("take")}>
+                  {busy === "take" ? "Берём в работу…" : "Взять в работу"}
                 </Button>
-                <Button variant="danger" disabled={busy} onClick={() => act("reject")}>
-                  Отклонить
-                </Button>
-              </div>
+                <ConfirmButton label="Отклонить" confirmLabel="Да, отклонить заявку" disabled={busy !== ""} onConfirm={() => act("reject")} />
+              </>
             )}
             {req.status === "in_progress" && (
-              <Button disabled={busy} onClick={() => act("close")}>
-                Закрыть заявку
+              <Button variant="secondary" className="flex-1" disabled={busy !== ""} onClick={() => act("close")}>
+                {busy === "close" ? "Закрываем…" : "Закрыть заявку"}
               </Button>
             )}
             {req.status !== "new" && req.status !== "in_progress" && (
-              <p className="text-sm text-zinc-500">Заявка в финальном статусе — действий нет.</p>
+              <p className="text-ink-2">Действий не требуется: заявка {STATUS_LABELS[req.status].toLowerCase()}.</p>
+            )}
+          </div>
+        </Card>
+
+        <div className="min-w-0 space-y-4 lg:col-span-2 lg:row-start-1 lg:space-y-6">
+          <Card title="Что нужно клиенту">
+            <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {req.answers.map((a, i) => (
+                <Fact key={i} label={a.label}>
+                  {a.value}
+                </Fact>
+              ))}
+            </dl>
+            {req.message && (
+              <figure className="mt-5 border-l-2 border-line-strong pl-4">
+                <figcaption className="text-meta text-ink-3">Первое сообщение клиента</figcaption>
+                <blockquote className="mt-0.5 whitespace-pre-wrap">{req.message}</blockquote>
+              </figure>
+            )}
+            {req.updated_at !== req.created_at && (
+              <p className="mt-5 text-meta text-ink-3">
+                Обновлена <When iso={req.updated_at} />
+              </p>
             )}
           </Card>
 
-          <Card title="Заметка мастера">
-            <textarea
+          <Card>
+            <TextArea
+              label="Заметка мастера"
+              hint="Клиент заметку не видит."
               value={noteValue}
-              onChange={(e) => setNote(e.target.value)}
+              onChange={(e) => {
+                setNote(e.target.value);
+                setNoteSaved(false);
+              }}
               rows={4}
               maxLength={4000}
-              placeholder="Например: договорились на субботу, 11:00; нужно заказать фильтр. Клиент заметку не видит."
-              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
+              placeholder="Например: договорились на субботу, 11:00; нужно заказать фильтр."
             />
-            <div className="mt-3">
-              <Button disabled={busy || note === null || note === req.note} onClick={saveNote}>
-                Сохранить заметку
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Button variant="secondary" disabled={busy !== "" || note === null || note === req.note} onClick={saveNote}>
+                {busy === "note" ? "Сохраняем…" : "Сохранить заметку"}
               </Button>
+              <span role="status" className="font-medium text-ok">
+                {noteSaved && "Заметка сохранена"}
+              </span>
             </div>
           </Card>
         </div>
-
-        <Card title="Клиент">
-          <dl className="space-y-3 text-sm">
-            <div>
-              <dt className="text-zinc-500">Имя</dt>
-              <dd className="font-medium">{clientName(c)}</dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Телефон для связи</dt>
-              <dd>
-                <a className="text-base font-semibold underline" href={telHref(req.phone)}>
-                  {formatPhone(req.phone)}
-                </a>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-zinc-500">Telegram</dt>
-              <dd>
-                {c.telegram_username ? (
-                  <a className="underline" href={`https://t.me/${c.telegram_username}`} target="_blank" rel="noreferrer">
-                    @{c.telegram_username}
-                  </a>
-                ) : (
-                  <span>ID {c.telegram_id}</span>
-                )}
-              </dd>
-            </div>
-          </dl>
-          <Link href={`/clients/${c.id}`} className="mt-4 inline-block text-sm font-medium underline">
-            Все заявки клиента →
-          </Link>
-        </Card>
       </div>
     </>
   );

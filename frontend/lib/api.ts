@@ -225,6 +225,34 @@ export function formatDate(iso: string): string {
   });
 }
 
+const TIME: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
+
+// How fresh something is, the way people say it: "5 мин назад", "сегодня, 21:48", "вчера, 09:10", then the date.
+export function formatWhen(iso: string, now = new Date()): string {
+  const date = new Date(iso);
+  const minutes = Math.floor((now.getTime() - date.getTime()) / 60000);
+  if (minutes >= 0 && minutes < 1) return "только что";
+  if (minutes >= 1 && minutes < 60) return `${minutes} мин назад`;
+
+  const time = date.toLocaleTimeString("ru-RU", TIME);
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / 86400000);
+  if (days === 0) return `сегодня, ${time}`;
+  if (days === 1) return `вчера, ${time}`;
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${date.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}, ${time}`;
+  }
+  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+}
+
+const pluralRules = new Intl.PluralRules("ru-RU");
+
+// "1 заявка", "2 заявки", "5 заявок"
+export function requestsCount(n: number): string {
+  const forms: Record<string, string> = { one: "заявка", few: "заявки" };
+  return `${n} ${forms[pluralRules.select(n)] ?? "заявок"}`;
+}
+
 export function formatPhone(phone: string): string {
   const m = /^\+7(\d{3})(\d{3})(\d{2})(\d{2})$/.exec(phone);
   return m ? `+7 ${m[1]} ${m[2]}-${m[3]}-${m[4]}` : phone;
@@ -244,7 +272,7 @@ export function answersDigest(r: ServiceRequest): string {
 }
 
 export const BOT_ERRORS: Record<string, string> = {
-  unauthorized: "Telegram не принимает токен — возможно, его перевыпустили в @BotFather. Вставьте новый токен.",
+  unauthorized: "Telegram отклонил токен — возможно, его перевыпустили в @BotFather. Вставьте новый токен.",
   conflict: "Сообщения этого бота уже получает другая программа. Отключите её или создайте для заявок отдельного бота.",
   unavailable: "Нет связи с Telegram. Бот заработает сам, как только связь восстановится.",
 };

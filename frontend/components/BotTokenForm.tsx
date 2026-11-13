@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Alert, Button } from "@/components/ui";
+import { Actions, Alert, Button, Field } from "@/components/ui";
 import { api, Bot, errorText } from "@/lib/api";
 
 // Token input shared by the onboarding and the settings page. The backend verifies the token with Telegram
@@ -36,28 +36,27 @@ export default function BotTokenForm({
 
   return (
     <form onSubmit={submit} className="space-y-3">
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-zinc-700">{label}</span>
-        <input
-          name="token"
-          required
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        />
-      </label>
+      <Field
+        label={label}
+        name="token"
+        required
+        autoComplete="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        placeholder="123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+        className="font-mono"
+      />
       {error && <Alert>{error}</Alert>}
-      <div className="flex flex-wrap gap-2">
+      <Actions>
         <Button type="submit" disabled={busy}>
           {busy ? "Проверяем токен…" : submitLabel}
         </Button>
         {onCancel && (
-          <Button type="button" variant="secondary" onClick={onCancel}>
+          <Button type="button" variant="ghost" onClick={onCancel}>
             Отмена
           </Button>
         )}
-      </div>
+      </Actions>
     </form>
   );
 }

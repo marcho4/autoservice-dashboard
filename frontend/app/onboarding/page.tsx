@@ -1,32 +1,49 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
-import { BotStatusBadge, botErrorText } from "@/components/BotStatus";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { BotStatusBadge, botErrorText, clientInvite } from "@/components/BotStatus";
 import BotTokenForm from "@/components/BotTokenForm";
-import { Alert, Button, Field, Loading } from "@/components/ui";
+import { Actions, Alert, Button, buttonClass, Card, CopyButton, Field, Icon, linkClass, Loading, Logo, textLinkClass } from "@/components/ui";
 import { api, ApiError, Autoservice, errorText } from "@/lib/api";
 import { useBot } from "@/lib/useBot";
 
-const STEPS = ["Аккаунт", "Бот", "Готово"];
+const STEPS = ["Аккаунт", "Бот", "Уведомления"];
 
+// current is the step in progress; STEPS.length means everything is done.
 function Stepper({ current }: { current: number }) {
   return (
-    <ol className="mb-8 flex items-center justify-center gap-2 text-sm">
+    <ol className="mb-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta">
       {STEPS.map((label, i) => (
-        <li key={label} className="flex items-center gap-2">
-          {i > 0 && <span className={`h-px w-6 sm:w-10 ${i <= current ? "bg-zinc-900" : "bg-zinc-300"}`} />}
+        <li key={label} aria-current={i === current ? "step" : undefined} className="flex items-center gap-2">
+          {i > 0 && <span className="h-px w-4 bg-line-strong sm:w-8" />}
           <span
-            className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
-              i < current ? "bg-emerald-600 text-white" : i === current ? "bg-zinc-900 text-white" : "bg-zinc-200 text-zinc-500"
+            className={`flex size-6 items-center justify-center rounded-full font-semibold tabular-nums ${
+              i < current ? "bg-ok-soft text-ok" : i === current ? "bg-ink text-surface" : "bg-sunken text-ink-3"
             }`}
           >
-            {i < current ? "✓" : i + 1}
+            {i < current ? <Icon name="check" className="size-3.5" /> : i + 1}
           </span>
-          <span className={i === current ? "font-medium text-zinc-900" : "text-zinc-500"}>{label}</span>
+          <span className={i === current ? "font-semibold" : "text-ink-2"}>
+            {label}
+            {i < current && <span className="sr-only"> — готово</span>}
+          </span>
         </li>
       ))}
     </ol>
+  );
+}
+
+// A task of the last step: what to do and why, then its buttons — stacked, so the text keeps its full width.
+function Task({ title, children, actions }: { title: ReactNode; children: ReactNode; actions: ReactNode }) {
+  return (
+    <li className="py-4">
+      <h3 className="font-semibold">{title}</h3>
+      <p className="max-w-[65ch] text-ink-2">{children}</p>
+      <div className="mt-3">
+        <Actions>{actions}</Actions>
+      </div>
+    </li>
   );
 }
 
@@ -61,13 +78,15 @@ export default function OnboardingPage() {
   }
 
   const loading = service === undefined || (service !== null && bot === undefined);
-  const step = !service ? 0 : bot ? 2 : 1;
+  // Without a recipient nobody learns about a new request, so the bot alone is not the finish.
+  const notified = Boolean(bot && bot.recipients.length > 0);
+  const step = !service ? 0 : !bot || bot.status === "error" ? 1 : notified ? 3 : 2;
 
   return (
-    <main className="mx-auto min-h-screen max-w-xl px-4 py-10">
-      <div className="mb-6 text-center">
-        <div className="text-3xl">🔧</div>
-        <h1 className="mt-2 text-xl font-semibold">{service ? service.name : "Настройка автосервиса"}</h1>
+    <main className="mx-auto min-h-dvh max-w-2xl px-4 pt-8 pb-12 sm:pt-12">
+      <div className="mb-6 flex items-center gap-3">
+        <Logo className="size-9" />
+        <h1 className="min-w-0 text-title">{service ? service.name : "Настройка автосервиса"}</h1>
       </div>
       <Stepper current={loading ? 1 : step} />
 
@@ -79,27 +98,27 @@ export default function OnboardingPage() {
       {loading && !error && <Loading />}
 
       {!loading && service === null && (
-        <form onSubmit={createService} className="space-y-4 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-          <Field label="Название автосервиса" name="name" required maxLength={200} placeholder="Гараж на Лесной" />
-          <Button type="submit" disabled={busy}>
-            Продолжить
-          </Button>
-        </form>
+        <Card>
+          <form onSubmit={createService} className="space-y-4">
+            <Field label="Название автосервиса" name="name" required maxLength={200} placeholder="Гараж на Лесной" />
+            <Button type="submit" disabled={busy}>
+              Продолжить
+            </Button>
+          </form>
+        </Card>
       )}
 
       {!loading && service && bot === null && (
-        <section className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold">Подключите Telegram-бота</h2>
-          <p className="mt-1 text-sm text-zinc-600">
-            Клиенты будут писать этому боту, а он — оформлять заявки. Создать бота можно за минуту:
-          </p>
-          <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-zinc-700">
+        <Card>
+          <h2 className="text-heading">Подключите Telegram-бота</h2>
+          <p className="mt-1 text-ink-2">Клиенты будут писать этому боту, а он — оформлять заявки. Создать бота можно за минуту:</p>
+          <ol className="mt-4 list-decimal space-y-2 pl-5 marker:font-semibold marker:text-ink-3">
             <li>
               Откройте в Telegram{" "}
-              <a className="font-medium text-zinc-900 underline" href="https://t.me/BotFather" target="_blank" rel="noreferrer">
+              <a className={textLinkClass} href="https://t.me/BotFather" target="_blank" rel="noreferrer">
                 @BotFather
               </a>{" "}
-              и отправьте команду <code className="rounded bg-zinc-100 px-1 py-0.5">/newbot</code>.
+              и отправьте команду <code className="rounded-tag bg-sunken px-1.5 py-0.5 font-mono text-meta">/newbot</code>.
             </li>
             <li>Придумайте боту имя (например, название автосервиса) и адрес, который заканчивается на «bot».</li>
             <li>BotFather пришлёт токен — длинную строку с двоеточием. Скопируйте её и вставьте сюда.</li>
@@ -107,78 +126,85 @@ export default function OnboardingPage() {
           <div className="mt-5">
             <BotTokenForm onConnected={setBot} />
           </div>
-          <p className="mt-4 text-sm text-zinc-500">
-            <Link href="/requests" className="underline">
-              Сделаю позже
-            </Link>
-          </p>
-        </section>
+          <Link href="/requests" className={`mt-3 text-ink-2 ${linkClass}`}>
+            Сделаю позже
+          </Link>
+        </Card>
       )}
 
       {!loading && service && bot && (
-        <section className="space-y-5 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
-          <div>
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-lg font-semibold">Бот @{bot.username}</h2>
-              <BotStatusBadge bot={bot} />
-            </div>
-            {bot.status === "pending" && <p className="mt-1 text-sm text-zinc-600">Запускаем бота, это займёт несколько секунд…</p>}
-            {bot.status === "running" && (
-              <p className="mt-1 text-sm text-zinc-600">Бот уже принимает заявки. Больше ничего настраивать не нужно.</p>
-            )}
-            {bot.status === "error" && (
-              <div className="mt-3 space-y-3">
-                <Alert>{botErrorText(bot)}</Alert>
-                <BotTokenForm label="Новый токен" submitLabel="Заменить токен" onConnected={setBot} />
-              </div>
-            )}
+        <Card>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 className="text-heading">Бот @{bot.username}</h2>
+            <BotStatusBadge bot={bot} />
           </div>
+          {bot.status === "pending" && <p className="mt-1 text-ink-2">Запускаем бота, это займёт несколько секунд…</p>}
+          {bot.status === "running" && (
+            <p className="mt-1 text-ink-2">
+              {notified
+                ? "Бот принимает заявки и присылает их в Telegram. Больше ничего настраивать не нужно."
+                : "Бот уже принимает заявки. Остался один шаг: чтобы новые заявки приходили вам в Telegram, нажмите «Получать заявки в Telegram», а затем «Запустить» в боте."}
+            </p>
+          )}
+          {bot.status === "error" && (
+            <div className="mt-3 space-y-3">
+              <Alert>{botErrorText(bot)}</Alert>
+              <BotTokenForm label="Новый токен" submitLabel="Заменить токен" onConnected={setBot} />
+            </div>
+          )}
 
-          <ul className="divide-y divide-zinc-100 border-y border-zinc-100 text-sm">
-            <li className="flex flex-wrap items-center justify-between gap-3 py-4">
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">Проверьте, как бот отвечает</div>
-                <div className="text-zinc-600">Напишите ему как клиент, например: «Хочу поменять масло на Camry».</div>
-              </div>
-              <a
-                href={bot.link}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-md border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-50"
-              >
-                Открыть бота
-              </a>
-            </li>
-            <li className="flex flex-wrap items-center justify-between gap-3 py-4">
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">Получайте новые заявки в Telegram</div>
-                {bot.recipients.length > 0 && <div className="font-medium text-emerald-700">✓ Уведомления подключены</div>}
-                <div className="text-zinc-600">Откройте ссылку с телефона мастера и нажмите «Запустить» — бот будет присылать ему каждую заявку.</div>
-              </div>
-              <a
-                href={bot.notify_link}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-md border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-50"
-              >
-                {bot.recipients.length > 0 ? "Подключить ещё" : "Подключить уведомления"}
-              </a>
-            </li>
-            <li className="flex flex-wrap items-center justify-between gap-3 py-4">
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">Услуги и вопросы бота</div>
-                <div className="text-zinc-600">Мы добавили типовые услуги автосервиса. Их и вопросы к ним можно изменить в любой момент.</div>
-              </div>
-              <Link href="/services" className="rounded-md border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-50">
-                Настроить услуги
-              </Link>
-            </li>
+          <ul className="mt-4 divide-y divide-line border-y border-line">
+            <Task
+              title={
+                notified ? (
+                  <span className="inline-flex items-center gap-1.5 text-ok">
+                    <Icon name="check" /> Уведомления подключены
+                  </span>
+                ) : (
+                  "Получайте новые заявки в Telegram"
+                )
+              }
+              actions={
+                <>
+                  <a href={bot.notify_link} target="_blank" rel="noreferrer" className={buttonClass({ variant: notified ? "secondary" : "primary" })}>
+                    {notified ? "Подключить ещё" : "Получать заявки в Telegram"}
+                  </a>
+                  <CopyButton text={bot.notify_link}>Скопировать ссылку</CopyButton>
+                </>
+              }
+            >
+              Откройте ссылку с телефона мастера и нажмите «Запустить» — бот будет присылать ему каждую заявку. Если заявки
+              должен получать другой человек, отправьте ему эту ссылку.
+            </Task>
+            <Task
+              title="Расскажите клиентам о боте"
+              actions={
+                <>
+                  <CopyButton text={clientInvite(service.name, bot)}>Скопировать ссылку для клиентов</CopyButton>
+                  <a href={bot.link} target="_blank" rel="noreferrer" className={buttonClass({ variant: "secondary" })}>
+                    Открыть бота
+                  </a>
+                </>
+              }
+            >
+              Отправьте ссылку клиентам или проверьте бота сами: напишите ему, например, «Хочу поменять масло на Camry».
+            </Task>
+            <Task
+              title="Услуги и вопросы бота"
+              actions={
+                <Link href="/services" className={buttonClass({ variant: "secondary" })}>
+                  Настроить услуги
+                </Link>
+              }
+            >
+              Мы добавили типовые услуги автосервиса. Их и вопросы к ним можно изменить в любой момент.
+            </Task>
           </ul>
 
-          <Link href="/requests" className="inline-flex rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700">
+          <Link href="/requests" className={buttonClass({ variant: notified ? "primary" : "secondary" }, "mt-4")}>
             Перейти к заявкам
           </Link>
-        </section>
+        </Card>
       )}
     </main>
   );

@@ -4,24 +4,30 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import NoAutoservice from "@/components/NoAutoservice";
-import { Alert, Button, Loading, PageTitle, StatusBadge } from "@/components/ui";
+import { Alert, Button, CallButton, Empty, Icon, listClass, Loading, PageTitle, rowLinkClass, StatusBadge, Table, When } from "@/components/ui";
 import {
   answersDigest,
   api,
   ApiError,
   clientName,
   errorText,
-  formatDate,
   formatPhone,
   RequestPage,
   RequestStatus,
-  STATUS_LABELS,
   telHref,
 } from "@/lib/api";
 
 const PAGE_SIZE = 20;
 const REFRESH_MS = 15000;
-const FILTERS: (RequestStatus | "")[] = ["", "new", "in_progress", "closed", "rejected", "cancelled"];
+// A filter names a group of requests, so the labels are plural, unlike the status of a single request.
+const FILTERS: { status: RequestStatus | ""; label: string }[] = [
+  { status: "", label: "Все" },
+  { status: "new", label: "Новые" },
+  { status: "in_progress", label: "В работе" },
+  { status: "closed", label: "Закрытые" },
+  { status: "rejected", label: "Отклонённые" },
+  { status: "cancelled", label: "Отменённые" },
+];
 
 export default function RequestsPage() {
   const router = useRouter();
@@ -76,57 +82,65 @@ export default function RequestsPage() {
 
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
   const all = data ? Object.values(data.counts).reduce((a, b) => a + b, 0) : 0;
-  const emptyText = all === 0 ? "Заявок пока нет — они появятся здесь, как только клиент напишет боту" : "В этом статусе заявок нет";
 
   return (
     <>
       <PageTitle
         actions={
-          <Button variant="secondary" onClick={() => setReload((n) => n + 1)}>
-            Обновить
-          </Button>
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSort(sort === "desc" ? "asc" : "desc");
+                setPage(0);
+              }}
+            >
+              <Icon name={sort === "desc" ? "down" : "up"} />
+              {sort === "desc" ? "Сначала новые" : "Сначала старые"}
+            </Button>
+            {/* The list refreshes itself every 15 seconds; on a phone the button would only push the requests down. */}
+            <span className="hidden sm:block">
+              <Button variant="secondary" size="sm" onClick={() => setReload((n) => n + 1)}>
+                Обновить
+              </Button>
+            </span>
+          </>
         }
       >
         Заявки
       </PageTitle>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1">
-          {FILTERS.map((f) => {
-            const count = data ? (f ? data.counts[f] : all) : null;
-            const active = status === f;
-            return (
-              <button
-                key={f || "all"}
-                onClick={() => {
-                  setStatus(f);
-                  setPage(0);
-                }}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-sm ${active ? "bg-zinc-900 text-white" : "bg-white text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-100"}`}
-              >
-                {f ? STATUS_LABELS[f] : "Все"}
-                {count !== null && count > 0 && (
-                  <span
-                    className={`rounded-full px-1.5 text-xs font-medium tabular-nums ${
-                      f === "new" ? "bg-blue-600 text-white" : active ? "bg-white/20" : "bg-zinc-100 text-zinc-600"
-                    }`}
-                  >
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-        <button
-          onClick={() => {
-            setSort(sort === "desc" ? "asc" : "desc");
-            setPage(0);
-          }}
-          className="text-sm text-zinc-700 hover:text-zinc-900"
-        >
-          {sort === "desc" ? "↓ Сначала новые" : "↑ Сначала старые"}
-        </button>
+      {/* One row that scrolls sideways on a phone, so the first request stays on the first screen. */}
+      <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0">
+        {FILTERS.map((f) => {
+          const count = data ? (f.status ? data.counts[f.status] : all) : 0;
+          const active = status === f.status;
+          return (
+            <button
+              key={f.status || "all"}
+              aria-pressed={active}
+              onClick={() => {
+                setStatus(f.status);
+                setPage(0);
+              }}
+              className={`flex min-h-control-sm shrink-0 items-center gap-2 rounded-control border px-3 text-meta font-medium whitespace-nowrap transition-colors duration-150 ${
+                active ? "border-ink bg-ink text-surface" : "border-line-strong bg-surface text-ink-2 hover:text-ink active:bg-sunken"
+              }`}
+            >
+              {f.label}
+              {count > 0 && (
+                <span
+                  className={`rounded-tag px-1.5 font-semibold tabular-nums ${
+                    f.status === "new" ? "bg-accent text-ink" : active ? "bg-surface/20" : "bg-sunken text-ink-2"
+                  }`}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {error !== null && (
@@ -135,34 +149,32 @@ export default function RequestsPage() {
         </div>
       )}
       {!data && error === null && <Loading />}
-      {/* Phone: cards with the phone number and the action one tap away. */}
-      {data && (
-        <ul className="space-y-3 sm:hidden">
-          {data.items.length === 0 && (
-            <li className="rounded-lg border border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500">{emptyText}</li>
-          )}
+      {data && data.items.length === 0 && (
+        <Empty title={all === 0 ? "Заявок пока нет" : "В этом статусе заявок нет"}>
+          {all === 0 && "Они появятся здесь, как только клиент напишет боту."}
+        </Empty>
+      )}
+
+      {/* Phone: the whole card opens the request, the phone number is a button of its own. */}
+      {data && data.items.length > 0 && (
+        <ul className={`sm:hidden ${listClass}`}>
           {data.items.map((r) => (
-            <li key={r.id} className="rounded-lg border border-zinc-200 bg-white p-4 text-sm shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <Link href={`/requests/${r.id}`} className="min-w-0 font-medium">
-                  <span className="text-zinc-500">№{r.number}</span> {r.service_name}
-                </Link>
+            <li key={r.id} className="relative p-4">
+              <div className="flex items-center gap-2 text-meta text-ink-3">
                 <StatusBadge status={r.status} />
+                <span className="tabular-nums">№{r.number}</span>
+                <When iso={r.created_at} className="ml-auto" />
               </div>
-              <Link href={`/requests/${r.id}`} className="mt-1 line-clamp-2 block text-zinc-600">
-                {answersDigest(r)}
+              <Link href={`/requests/${r.id}`} className={`mt-2 ${rowLinkClass}`}>
+                {r.service_name}
               </Link>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div>{clientName(r.client)}</div>
-                  <a href={telHref(r.phone)} className="font-medium underline">
-                    {formatPhone(r.phone)}
-                  </a>
-                  <div className="text-xs text-zinc-500">{formatDate(r.created_at)}</div>
-                </div>
+              <p className="mt-1 line-clamp-2 text-ink-2">{answersDigest(r)}</p>
+              <p className="mt-2 font-medium">{clientName(r.client)}</p>
+              <div className="relative z-10 mt-2 flex gap-2">
+                <CallButton phone={r.phone} name={clientName(r.client)} className="flex-1" />
                 {r.status === "new" && (
                   <Button variant="secondary" disabled={busyId === r.id} onClick={() => take(r.id)}>
-                    В работу
+                    {busyId === r.id ? "Берём…" : "В работу"}
                   </Button>
                 )}
               </div>
@@ -170,71 +182,69 @@ export default function RequestsPage() {
           ))}
         </ul>
       )}
-      {data && (
-        <div className="hidden overflow-x-auto rounded-lg border border-zinc-200 bg-white shadow-sm sm:block">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500">
-              <tr>
-                <th className="px-4 py-3 font-medium">№</th>
-                <th className="px-4 py-3 font-medium">Создана</th>
-                <th className="px-4 py-3 font-medium">Заявка</th>
-                <th className="px-4 py-3 font-medium">Клиент</th>
-                <th className="px-4 py-3 font-medium">Статус</th>
-                <th className="px-4 py-3" />
+
+      {/* Desktop: status first to scan the column, then what is asked and whom to call. */}
+      {data && data.items.length > 0 && (
+        <Table>
+          <thead>
+            <tr>
+              <th>Статус</th>
+              <th>Заявка</th>
+              <th>Клиент</th>
+              <th>Создана</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.map((r) => (
+              <tr key={r.id} onClick={() => router.push(`/requests/${r.id}`)} className="cursor-pointer">
+                <td>
+                  <StatusBadge status={r.status} />
+                </td>
+                <td className="max-w-sm">
+                  <Link
+                    href={`/requests/${r.id}`}
+                    className={`hover:underline ${r.status === "new" ? "font-semibold" : "font-medium"}`}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {r.service_name}
+                  </Link>
+                  <span className="ml-2 text-meta text-ink-3 tabular-nums">№{r.number}</span>
+                  <div className="truncate text-ink-2">{answersDigest(r)}</div>
+                </td>
+                <td className="whitespace-nowrap">
+                  <div className="text-ink-2">{clientName(r.client)}</div>
+                  <a href={telHref(r.phone)} className="font-semibold tabular-nums hover:underline" onClick={(e) => e.stopPropagation()}>
+                    {formatPhone(r.phone)}
+                  </a>
+                </td>
+                <td className="text-ink-2">
+                  <When iso={r.created_at} />
+                </td>
+                <td className="text-right">
+                  {r.status === "new" && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busyId === r.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        take(r.id);
+                      }}
+                    >
+                      {busyId === r.id ? "Берём…" : "В работу"}
+                    </Button>
+                  )}
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {data.items.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-zinc-500">
-                    {emptyText}
-                  </td>
-                </tr>
-              )}
-              {data.items.map((r) => (
-                <tr key={r.id} onClick={() => router.push(`/requests/${r.id}`)} className="cursor-pointer align-top hover:bg-zinc-50">
-                  <td className="px-4 py-3 tabular-nums text-zinc-500">{r.number}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-zinc-600">{formatDate(r.created_at)}</td>
-                  <td className="max-w-sm px-4 py-3">
-                    <Link href={`/requests/${r.id}`} className="font-medium hover:underline" onClick={(e) => e.stopPropagation()}>
-                      {r.service_name}
-                    </Link>
-                    <div className="truncate text-zinc-600">{answersDigest(r)}</div>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <div>{clientName(r.client)}</div>
-                    <a href={telHref(r.phone)} className="text-zinc-600 hover:underline" onClick={(e) => e.stopPropagation()}>
-                      {formatPhone(r.phone)}
-                    </a>
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={r.status} />
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    {r.status === "new" && (
-                      <Button
-                        variant="secondary"
-                        className="whitespace-nowrap !px-3 !py-1.5"
-                        disabled={busyId === r.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          take(r.id);
-                        }}
-                      >
-                        В работу
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </Table>
       )}
 
       {data && data.total > PAGE_SIZE && (
-        <div className="mt-4 flex items-center justify-between text-sm">
-          <span className="text-zinc-600">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-meta text-ink-2 tabular-nums">
             Всего: {data.total} · страница {page + 1} из {pages}
           </span>
           <div className="flex gap-2">

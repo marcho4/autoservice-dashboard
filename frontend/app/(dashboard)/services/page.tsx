@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import NoAutoservice from "@/components/NoAutoservice";
 import ServiceEditor from "@/components/ServiceEditor";
-import { Alert, Button, Loading, PageTitle } from "@/components/ui";
+import { Alert, Badge, Button, Card, Empty, Icon, IconButton, Loading, PageTitle } from "@/components/ui";
 import { api, ApiError, errorText, List, Service, ServiceInput } from "@/lib/api";
 
 const NEW = "new";
@@ -65,7 +65,9 @@ export default function ServicesPage() {
 
   const toggle = (s: Service) =>
     quick(async () => {
-      const updated = await api.put<Service>(`services/${s.id}`, { ...s, is_active: !s.is_active });
+      // Only the editable fields: the backend rejects a body with id and timestamps as invalid JSON.
+      const input: ServiceInput = { name: s.name, description: s.description, is_active: !s.is_active, fields: s.fields };
+      const updated = await api.put<Service>(`services/${s.id}`, input);
       return list.map((x) => (x.id === updated.id ? updated : x));
     });
 
@@ -95,17 +97,14 @@ export default function ServicesPage() {
           services &&
           editing !== NEW && (
             <Button onClick={() => setEditing(NEW)} disabled={list.length >= 30}>
-              + Добавить услугу
+              Добавить услугу
             </Button>
           )
         }
+        lead="Клиент пишет боту своими словами. Бот сам определяет услугу, берёт из сообщения всё, что уже сказано, и задаёт только недостающие вопросы из формы услуги."
       >
         Услуги
       </PageTitle>
-      <p className="-mt-3 mb-6 max-w-2xl text-sm text-zinc-600">
-        Клиент пишет боту своими словами. Бот сам определяет услугу, берёт из сообщения всё, что уже сказано, и задаёт
-        только недостающие вопросы из формы услуги.
-      </p>
 
       {error !== null && (
         <div className="mb-4">
@@ -114,80 +113,66 @@ export default function ServicesPage() {
       )}
       {!services && error === null && <Loading />}
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {editing === NEW && (
-          <section className="rounded-lg border border-zinc-900 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-base font-semibold">Новая услуга</h2>
+          <Card title="Новая услуга" outline="ink">
             <ServiceEditor service={null} onSave={save(null)} onCancel={() => setEditing("")} />
-          </section>
+          </Card>
         )}
 
         {services && list.length === 0 && editing !== NEW && (
-          <section className="rounded-lg border border-dashed border-zinc-300 bg-white p-8 text-center">
-            <p className="text-sm text-zinc-600">Услуг нет, поэтому бот не может принимать заявки.</p>
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
-              <Button onClick={addDefaults} disabled={busy}>
-                Добавить типовые услуги
-              </Button>
-              <Button variant="secondary" onClick={() => setEditing(NEW)}>
-                Создать свою
-              </Button>
-            </div>
-          </section>
+          <Empty
+            title="Услуг нет"
+            actions={
+              <>
+                <Button onClick={addDefaults} disabled={busy}>
+                  Добавить типовые услуги
+                </Button>
+                <Button variant="secondary" onClick={() => setEditing(NEW)}>
+                  Создать свою
+                </Button>
+              </>
+            }
+          >
+            Без услуг бот не может принимать заявки.
+          </Empty>
         )}
 
         {list.map((s, i) =>
           editing === s.id ? (
-            <section key={s.id} className="rounded-lg border border-zinc-900 bg-white p-5 shadow-sm">
+            <Card key={s.id} outline="ink">
               <ServiceEditor service={s} onSave={save(s)} onDelete={remove(s)} onCancel={() => setEditing("")} />
-            </section>
+            </Card>
           ) : (
-            <section key={s.id} className={`rounded-lg border border-zinc-200 bg-white p-5 shadow-sm ${s.is_active ? "" : "opacity-60"}`}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
+            <Card key={s.id} outline={s.is_active ? "line" : "dashed"}>
+              <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
                 <div className="w-full sm:w-auto sm:min-w-0 sm:flex-1">
-                  <h2 className="flex flex-wrap items-center gap-2 text-base font-semibold">
+                  <h2 className={`flex flex-wrap items-center gap-2 text-heading ${s.is_active ? "" : "text-ink-2"}`}>
                     {s.name}
-                    {!s.is_active && <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700">Выключена</span>}
+                    {!s.is_active && <Badge tone="neutral">Выключена</Badge>}
                   </h2>
-                  {s.description && <p className="mt-0.5 text-sm text-zinc-600">{s.description}</p>}
+                  {s.description && <p className="mt-0.5 text-ink-2">{s.description}</p>}
+                  <p className="mt-2 text-meta text-ink-2">
+                    <span className="text-ink-3">Бот спросит: </span>
+                    {[...s.fields.map((f) => (f.required ? f.label : `${f.label} (необязательно)`)), "Телефон"].join(" · ")}
+                  </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-1">
-                  <button
-                    title="Выше"
-                    aria-label="Выше"
-                    disabled={busy || i === 0}
-                    onClick={() => move(i, -1)}
-                    className="h-9 w-9 rounded-md border border-zinc-300 text-sm hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    title="Ниже"
-                    aria-label="Ниже"
-                    disabled={busy || i === list.length - 1}
-                    onClick={() => move(i, 1)}
-                    className="h-9 w-9 rounded-md border border-zinc-300 text-sm hover:bg-zinc-100 disabled:cursor-not-allowed disabled:text-zinc-300"
-                  >
-                    ↓
-                  </button>
-                  <Button variant="secondary" disabled={busy} onClick={() => toggle(s)}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <IconButton label="Выше" disabled={busy || i === 0} onClick={() => move(i, -1)}>
+                    <Icon name="up" />
+                  </IconButton>
+                  <IconButton label="Ниже" disabled={busy || i === list.length - 1} onClick={() => move(i, 1)}>
+                    <Icon name="down" />
+                  </IconButton>
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => toggle(s)}>
                     {s.is_active ? "Выключить" : "Включить"}
                   </Button>
-                  <Button variant="secondary" onClick={() => setEditing(s.id)}>
+                  <Button variant="secondary" size="sm" onClick={() => setEditing(s.id)}>
                     Изменить
                   </Button>
                 </div>
               </div>
-              <ul className="mt-3 flex flex-wrap gap-1.5 text-xs">
-                {s.fields.map((f) => (
-                  <li key={f.id} className="rounded-full bg-zinc-100 px-2.5 py-1 text-zinc-700">
-                    {f.label}
-                    {!f.required && <span className="text-zinc-400"> · необязательно</span>}
-                  </li>
-                ))}
-                <li className="rounded-full bg-zinc-100 px-2.5 py-1 text-zinc-700">Телефон</li>
-              </ul>
-            </section>
+            </Card>
           ),
         )}
       </div>
