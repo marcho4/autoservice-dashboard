@@ -72,6 +72,9 @@ docker compose exec api ./app reset-password owner@example.com
 распознанных LLM, и её стоимость в токенах, скорость реакции мастера, зависшие заявки, состояние ботов.
 Что означает каждая метрика и когда беспокоиться — в [docs/DESIGN.md](docs/DESIGN.md), раздел 10.
 
+Дашборд Grafana — [grafana/autoservice-dashboard.json](grafana/autoservice-dashboard.json): Dashboards → New → Import,
+источник — VictoriaMetrics, подключённая как Prometheus (запросы на MetricsQL).
+
 ## Структура
 
 ```
@@ -86,6 +89,7 @@ backend/   Go: HTTP API (chi), PostgreSQL (pgx), бот
   internal/testkit           фейковые Telegram и LLM для тестов
 frontend/  Next.js: кабинет (заявки, клиенты, услуги, автосервис и бот)
 deploy/    манифесты Kubernetes
+grafana/   дашборд Grafana
 ```
 
 ## Тесты
