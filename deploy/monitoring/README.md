@@ -35,4 +35,19 @@ kubectl apply -f deploy/alertConfigMap.yml
 - VictoriaLogs: `kubectl -n logging port-forward svc/vlogs-victoria-logs-single-server 9428:9428`, затем http://localhost:9428/select/vmui.
 - Grafana: `kubectl -n autoservice port-forward svc/grafana 3001:80`, затем http://localhost:3001, логин `admin`, пароль:
   `kubectl -n autoservice get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d`.
-  Источники VictoriaMetrics и VictoriaLogs уже настроены.
+  Источники VictoriaMetrics и VictoriaLogs уже настроены, дашборд «Автосервис: приложение» — в папке «Автосервис».
+
+## Дашборды
+
+JSON дашбордов лежит в `dashboards/`. `install.sh` кладёт их в ConfigMap `grafana-dashboards`, Grafana подхватывает
+изменения сама примерно за минуту. Правки в UI Grafana не переживают рестарт пода: меняйте JSON в репозитории
+и обновляйте ConfigMap:
+
+```sh
+kubectl -n autoservice create configmap grafana-dashboards --from-file=deploy/monitoring/dashboards/ \
+  --dry-run=client -o yaml | kubectl apply --server-side --force-conflicts -f -
+```
+
+`autoservice.json` устроен сверху вниз: SLO и сводки → RED (Rate, Errors, Duration) по сервисам → USE
+(Utilization, Saturation, Errors) по ресурсам → продуктовые показатели. Запросы на MetricsQL, работают только
+с VictoriaMetrics.

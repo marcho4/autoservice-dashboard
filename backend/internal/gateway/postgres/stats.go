@@ -13,14 +13,15 @@ import (
 )
 
 func WriteStats(ctx context.Context, db *pgxpool.Pool, w io.Writer) error {
-	var registered, withBot, withNotifications, withRequests, overdue uint64
+	var registered, withBot, withNotifications, withRequests, overdue, pendingUpdates uint64
 	err := db.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM autoservices),
 		(SELECT count(*) FROM bots),
 		(SELECT count(DISTINCT autoservice_id) FROM notify_recipients),
 		(SELECT count(DISTINCT autoservice_id) FROM requests),
-		(SELECT count(*) FROM requests WHERE status = 'new' AND created_at < now() - interval '24 hours')`).
-		Scan(&registered, &withBot, &withNotifications, &withRequests, &overdue)
+		(SELECT count(*) FROM requests WHERE status = 'new' AND created_at < now() - interval '24 hours'),
+		(SELECT count(*) FROM bot_updates)`).
+		Scan(&registered, &withBot, &withNotifications, &withRequests, &overdue, &pendingUpdates)
 	if err != nil {
 		return err
 	}
@@ -29,6 +30,7 @@ func WriteStats(ctx context.Context, db *pgxpool.Pool, w io.Writer) error {
 	metrics.WriteGaugeUint64(w, `autoservices{stage="notifications_on"}`, withNotifications)
 	metrics.WriteGaugeUint64(w, `autoservices{stage="has_requests"}`, withRequests)
 	metrics.WriteGaugeUint64(w, "requests_overdue", overdue)
+	metrics.WriteGaugeUint64(w, "bot_updates_pending", pendingUpdates)
 
 	byStatus := map[domain.RequestStatus]uint64{
 		domain.StatusNew: 0, domain.StatusInProgress: 0, domain.StatusClosed: 0, domain.StatusRejected: 0, domain.StatusCancelled: 0,

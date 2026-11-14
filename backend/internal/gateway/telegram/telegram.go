@@ -74,8 +74,11 @@ func (c *Client) call(ctx context.Context, hc *http.Client, token, method string
 }
 
 func (c *Client) do(ctx context.Context, hc *http.Client, token, method string, payload, result any) (err error) {
+	start := time.Now()
 	defer func() {
 		metrics.GetOrCreateCounter(fmt.Sprintf(`telegram_requests_total{method=%q,ok="%t"}`, method, err == nil)).Inc()
+		metrics.GetOrCreateHistogram(fmt.Sprintf(`telegram_request_duration_milliseconds{method=%q}`, method)).
+			Update(float64(time.Since(start).Milliseconds()))
 	}()
 	body := []byte("{}")
 	if payload != nil {

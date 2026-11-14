@@ -71,6 +71,8 @@ docker compose exec api ./app reset-password owner@example.com
 Бэкенд отдаёт метрики Prometheus на `/metrics`: воронку онбординга, конверсию диалогов бота, долю сообщений,
 распознанных LLM, и её стоимость в токенах, скорость реакции мастера, зависшие заявки, состояние ботов.
 Что означает каждая метрика и когда беспокоиться — в [docs/DESIGN.md](docs/DESIGN.md), раздел 10.
+Дашборд Grafana по RED и USE — [deploy/monitoring/dashboards/autoservice.json](deploy/monitoring/dashboards/autoservice.json),
+в кластер он попадает вместе с Grafana из [deploy/monitoring](deploy/monitoring/README.md).
 
 ## Структура
 

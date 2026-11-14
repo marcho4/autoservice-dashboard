@@ -69,6 +69,7 @@ func NewRouter(d Deps) http.Handler {
 	})
 	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		metrics.WritePrometheus(w, true)
+		metrics.WriteFDMetrics(w)
 		if err := d.Stats(r.Context(), w); err != nil {
 			logger(r).Warn("database gauges are missing from the scrape", "error", err)
 		}

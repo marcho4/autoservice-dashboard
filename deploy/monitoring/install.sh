@@ -32,6 +32,8 @@ helm upgrade --install vlogs vm/victoria-logs-single --version 0.13.10 \
 helm upgrade --install vlcollector vm/victoria-logs-collector --version 0.3.8 \
   -n logging -f vlcollector-values.yaml
 
-# Дашборды
+# Дашборды. Server-side apply: JSON дашборда не влезает в аннотацию last-applied обычного apply.
+kubectl -n autoservice create configmap grafana-dashboards --from-file=dashboards/ \
+  --dry-run=client -o yaml | kubectl apply --server-side --force-conflicts -f -
 helm upgrade --install grafana grafana-community/grafana --version 14.4.1 \
   -n autoservice -f grafana-values.yaml
