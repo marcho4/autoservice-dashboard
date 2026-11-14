@@ -1,0 +1,41 @@
+# vmalert + Alertmanager, чарт vm/victoria-metrics-alert.
+# Здесь только то, что отличается от значений чарта по умолчанию.
+server:
+  # VictoriaMetrics из vmsingle-values.yaml, тот же namespace autoservice.
+  datasource:
+    url: http://vmsingle-victoria-metrics-single-server:8428
+  # Правила: ConfigMap alerts из deploy/alertConfigMap.yml, исходники в alerts/.
+  configMap: alerts
+  extraArgs:
+    rule:
+      - /config/*.yml
+    configCheckInterval: 30s
+
+alertmanager:
+  enabled: true
+  image:
+    tag: v0.34.1
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: telegram
+      group_by: ["severity", "alertname"]
+      group_wait: 30s
+      group_interval: 10s
+      repeat_interval: 15m
+    receivers:
+      - name: telegram
+        telegram_configs:
+          # Токен бота в секрете alertmanager-telegram, его создаёт install.sh.
+          - bot_token_file: /secrets/telegram/bot_token
+            chat_id: 797892780
+            send_resolved: true
+  extraVolumes:
+    - name: telegram
+      secret:
+        secretName: alertmanager-telegram
+  extraVolumeMounts:
+    - name: telegram
+      mountPath: /secrets/telegram
+      readOnly: true

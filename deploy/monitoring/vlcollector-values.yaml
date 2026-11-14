@@ -1,0 +1,3 @@
+# Сборщик логов подов, чарт vm/victoria-logs-collector. Пишет в VictoriaLogs (релиз vlogs).
+remoteWrite:
+  - url: http://vlogs-victoria-logs-single-server.logging.svc.cluster.local:9428

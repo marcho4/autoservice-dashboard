@@ -86,6 +86,7 @@ backend/   Go: HTTP API (chi), PostgreSQL (pgx), бот
   internal/testkit           фейковые Telegram и LLM для тестов
 frontend/  Next.js: кабинет (заявки, клиенты, услуги, автосервис и бот)
 deploy/    манифесты Kubernetes
+  monitoring/                helm values и скрипт установки: VictoriaMetrics, алерты, VictoriaLogs, Grafana
 ```
 
 ## Тесты
