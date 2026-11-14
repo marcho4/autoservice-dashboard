@@ -3,6 +3,23 @@
 plugins:
   - victoriametrics-logs-datasource
 
+# Дашборды из dashboards/: install.sh кладёт их в ConfigMap grafana-dashboards, Grafana перечитывает их сама.
+# Правки в UI пропадают при рестарте пода, поэтому меняйте JSON в репозитории.
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: Автосервис
+        type: file
+        disableDeletion: true
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+dashboardsConfigMaps:
+  default: grafana-dashboards
+
 datasources:
   datasources.yaml:
     apiVersion: 1
