@@ -7,12 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// The internal API lets an external integration act as a bot of an autoservice.
-// The built-in Telegram bot does not use it; it is mounted only when BOT_API_KEY is set.
-
 type botAutoserviceKey struct{}
 
-// resolveBot maps the {botID} path parameter to the autoservice of that bot.
 func (h *Handler) resolveBot(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		botID, ok := int64Param(w, r, "botID")

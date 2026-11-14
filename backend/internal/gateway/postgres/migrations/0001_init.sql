@@ -15,7 +15,6 @@ CREATE TABLE revoked_tokens (
 );
 CREATE INDEX revoked_tokens_expires_at_idx ON revoked_tokens (expires_at);
 
--- One autoservice per employee: owner_id is unique. Deleting the employee deletes the autoservice.
 CREATE TABLE autoservices (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_id    uuid        NOT NULL REFERENCES employees (id) ON DELETE CASCADE,
@@ -28,7 +27,6 @@ CREATE TABLE autoservices (
     CONSTRAINT autoservices_owner_id_key UNIQUE (owner_id)
 );
 
--- One bot per autoservice, and a Telegram bot can be connected to only one autoservice.
 CREATE TABLE bots (
     autoservice_id  uuid PRIMARY KEY REFERENCES autoservices (id) ON DELETE CASCADE,
     telegram_bot_id bigint      NOT NULL,
@@ -64,7 +62,6 @@ CREATE TABLE requests (
     created_at     timestamptz NOT NULL DEFAULT now(),
     updated_at     timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT requests_status_check CHECK (status IN ('new', 'in_progress', 'closed', 'rejected', 'cancelled')),
-    -- The client must belong to the same autoservice as the request.
     CONSTRAINT requests_client_fkey FOREIGN KEY (client_id, autoservice_id)
         REFERENCES clients (id, autoservice_id) ON DELETE CASCADE
 );

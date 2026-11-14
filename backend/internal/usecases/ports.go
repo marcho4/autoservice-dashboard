@@ -11,7 +11,7 @@ import (
 )
 
 type EmployeeRepository interface {
-	Create(ctx context.Context, e domain.Employee) (domain.Employee, error)
+	Create(ctx context.Context, e domain.Employee, autoservice *domain.AutoserviceInput) (domain.Employee, error)
 	GetByID(ctx context.Context, id uuid.UUID) (domain.Employee, error)
 	GetByEmail(ctx context.Context, email string) (domain.Employee, error)
 	UpdateProfile(ctx context.Context, id uuid.UUID, email, fullName string) (domain.Employee, error)

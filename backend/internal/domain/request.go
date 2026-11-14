@@ -19,7 +19,6 @@ const (
 	StatusCancelled  RequestStatus = "cancelled"
 )
 
-// MaxRequestsPerClientPerDay caps requests of one Telegram user in any status, so the bot cannot be used to flood the CRM.
 const MaxRequestsPerClientPerDay = 5
 
 func ParseRequestStatus(s string) (RequestStatus, error) {
@@ -53,8 +52,6 @@ func CanTransition(from, to RequestStatus, actor Actor) bool {
 	return ok && allowedActor == actor
 }
 
-// Answer is a filled form field. Requests keep a snapshot of labels,
-// so editing or deleting a service later does not change old requests.
 type Answer struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
@@ -86,7 +83,6 @@ type RequestWithClient struct {
 }
 
 type RequestInput struct {
-	// DraftID, when set, becomes the request ID: creating the same draft again returns the request made the first time.
 	DraftID     uuid.UUID
 	ServiceID   *uuid.UUID
 	ServiceName string

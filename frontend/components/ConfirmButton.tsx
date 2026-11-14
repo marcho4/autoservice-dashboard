@@ -3,8 +3,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui";
 
-// Two-step destructive button: a quiet first step, so a slip of the finger costs nothing,
-// and a solid red one only when the question is asked. Focus lands on the safe answer.
 export default function ConfirmButton({
   label,
   confirmLabel,

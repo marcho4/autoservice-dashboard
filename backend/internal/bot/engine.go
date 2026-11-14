@@ -1,7 +1,3 @@
-// Package bot is the built-in Telegram bot of an autoservice.
-//
-// A client describes the problem in free form; one LLM call picks the service and pre-fills its form.
-// Everything after that is a plain state machine: ask the missing fields, ask the phone, show the summary, submit on confirmation.
 package bot
 
 import (
@@ -23,7 +19,6 @@ import (
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 )
 
-// Backend is what the bot needs from the application.
 type Backend interface {
 	Autoservice(ctx context.Context, autoserviceID uuid.UUID) (domain.Autoservice, error)
 	ActiveServices(ctx context.Context, autoserviceID uuid.UUID) ([]domain.Service, error)
@@ -35,8 +30,6 @@ type Backend interface {
 	Recipients(ctx context.Context, autoserviceID uuid.UUID) ([]domain.NotifyRecipient, error)
 }
 
-// StateStore persists the dialog state of a chat as an opaque document.
-// A state left untouched for a day is not loaded any more, and DeleteExpired removes it.
 type StateStore interface {
 	Load(ctx context.Context, autoserviceID uuid.UUID, chatID int64) ([]byte, error)
 	Save(ctx context.Context, autoserviceID uuid.UUID, chatID int64, state []byte) error
@@ -49,26 +42,24 @@ type ExtractInput struct {
 	Message     string
 }
 
-// Extraction is the LLM's reading of a free-form message. It is untrusted: the engine validates every value.
 type Extraction struct {
 	ServiceID uuid.UUID
-	Values    map[string]string // form field ID -> raw value
+	Values    map[string]string
 	Phone     string
 }
 
-// Extractor picks a service for a free-form client message and pulls out the form fields the client already mentioned.
 type Extractor interface {
 	Extract(ctx context.Context, in ExtractInput) (Extraction, error)
 }
 
 type Incoming struct {
-	ChatID int64
-	From   domain.ClientIdentity
-	// Exactly one of Text, Contact and Callback is set; none of them means an unsupported message such as a photo.
-	Text     string
-	Contact  string
-	Callback string
-	// MessageText is the text of the message whose inline button was pressed.
+	UpdateID    int64
+	BotID       int64
+	ChatID      int64
+	From        domain.ClientIdentity
+	Text        string
+	Contact     string
+	Callback    string
 	MessageText string
 }
 
@@ -83,7 +74,6 @@ type ReplyButton struct {
 	RequestContact bool
 }
 
-// Outgoing is a message to send; Text is Telegram HTML.
 type Outgoing struct {
 	ChatID         int64
 	Text           string
@@ -93,8 +83,7 @@ type Outgoing struct {
 }
 
 type Result struct {
-	Messages []Outgoing
-	// The rest applies to a pressed inline button: a toast, and what to do with the message that carried the button.
+	Messages     []Outgoing
 	Toast        string
 	EditText     string
 	ClearButtons bool
@@ -108,7 +97,6 @@ type Engine struct {
 	log       *slog.Logger
 	now       func() time.Time
 
-	// LLM budget of each autoservice. In memory is enough: only the leader runner handles updates.
 	llmMu    sync.Mutex
 	llmUsage map[uuid.UUID]llmUsage
 }
@@ -118,8 +106,6 @@ type llmUsage struct {
 	calls int
 }
 
-// NewEngine builds the dialog engine. extractor may be nil: the client then picks the service with buttons.
-// appURL, when it is an https URL, adds an "open in CRM" button to master notifications.
 func NewEngine(backend Backend, state StateStore, extractor Extractor, appURL string, log *slog.Logger) *Engine {
 	return &Engine{backend: backend, state: state, extractor: extractor, appURL: strings.TrimRight(appURL, "/"), log: log, now: time.Now,
 		llmUsage: map[uuid.UUID]llmUsage{}}
@@ -129,25 +115,26 @@ type step string
 
 const (
 	stepIdle    step = ""
-	stepService step = "service" // waiting for a service: a button or another free-form message
-	stepField   step = "field"   // waiting for the answer to the Current form field
+	stepService step = "service"
+	stepField   step = "field"
 	stepPhone   step = "phone"
-	stepConfirm step = "confirm" // the summary is shown
-	stepEdit    step = "edit"    // the "what to change" menu is shown
+	stepConfirm step = "confirm"
+	stepEdit    step = "edit"
 )
 
 type conversation struct {
-	Step      step              `json:"step,omitempty"`
-	DraftID   uuid.UUID         `json:"draft_id"` // the future request ID: binds the summary buttons, makes the submit idempotent
-	ServiceID uuid.UUID         `json:"service_id"`
-	Message   string            `json:"message,omitempty"`
-	Values    map[string]string `json:"values,omitempty"`
-	Skipped   map[string]bool   `json:"skipped,omitempty"`
-	Phone     string            `json:"phone,omitempty"`
-	Current   string            `json:"current,omitempty"`
-	// LLM budget of the chat; it survives resets so that restarting the dialog does not refill it.
-	LLMCalls int   `json:"llm_calls,omitempty"`
-	LLMSince int64 `json:"llm_since,omitempty"`
+	LastUpdateID int64             `json:"last_update_id,omitempty"`
+	BotID        int64             `json:"bot_id,omitempty"`
+	Step         step              `json:"step,omitempty"`
+	DraftID      uuid.UUID         `json:"draft_id"`
+	ServiceID    uuid.UUID         `json:"service_id"`
+	Message      string            `json:"message,omitempty"`
+	Values       map[string]string `json:"values,omitempty"`
+	Skipped      map[string]bool   `json:"skipped,omitempty"`
+	Phone        string            `json:"phone,omitempty"`
+	Current      string            `json:"current,omitempty"`
+	LLMCalls     int               `json:"llm_calls,omitempty"`
+	LLMSince     int64             `json:"llm_since,omitempty"`
 }
 
 const (
@@ -157,8 +144,6 @@ const (
 	llmCallsPerAutoservice = 300
 	maxListedOrders        = 5
 
-	// Telegram rejects messages over 4096 characters. Long answers are shortened in the summary and in the
-	// master notification so that even a full form of maximum-length answers fits; the CRM keeps them whole.
 	shownAnswerLength  = 150
 	shownMessageLength = 300
 )
@@ -173,16 +158,14 @@ const (
 	cbBack      = "back"
 	cbCancel    = "cancel"
 	cbCancelReq = "rcancel"
-	cbOther     = "other" // another service instead of the one the LLM picked
+	cbOther     = "other"
 
 	editPhone   = "phone"
 	editService = "service"
 )
 
-// count bumps a product counter. What each one answers is described in docs/DESIGN.md, section 10.
 func count(name string) { metrics.GetOrCreateCounter(name).Inc() }
 
-// Handle processes one update of a chat and returns what to send back. Updates of one chat must be handled sequentially.
 func (e *Engine) Handle(ctx context.Context, autoserviceID uuid.UUID, in Incoming) (Result, error) {
 	var st conversation
 	raw, err := e.state.Load(ctx, autoserviceID, in.ChatID)
@@ -196,11 +179,15 @@ func (e *Engine) Handle(ctx context.Context, autoserviceID uuid.UUID, in Incomin
 		}
 	}
 
+	if in.UpdateID != 0 && st.BotID == in.BotID && in.UpdateID <= st.LastUpdateID {
+		return Result{}, nil
+	}
 	t := &turn{e: e, ctx: ctx, autoserviceID: autoserviceID, in: in, st: st}
 	if err := t.dispatch(); err != nil {
 		return Result{}, err
 	}
 
+	t.st.LastUpdateID, t.st.BotID = in.UpdateID, in.BotID
 	raw, _ = json.Marshal(t.st)
 	if err := e.state.Save(ctx, autoserviceID, in.ChatID, raw); err != nil {
 		return Result{}, fmt.Errorf("save conversation: %w", err)
@@ -208,7 +195,6 @@ func (e *Engine) Handle(ctx context.Context, autoserviceID uuid.UUID, in Incomin
 	return t.res, nil
 }
 
-// turn is the handling of a single update.
 type turn struct {
 	e             *Engine
 	ctx           context.Context
@@ -246,7 +232,6 @@ func (t *turn) dispatch() error {
 	}
 }
 
-// onUnsupported answers a photo, a voice message and the like, and repeats what the bot is waiting for.
 func (t *turn) onUnsupported() error {
 	const text = "Голосовые и фото я пока не принимаю — напишите, пожалуйста, текстом."
 	switch t.st.Step {
@@ -347,7 +332,6 @@ func (t *turn) onText(text string) error {
 	}
 }
 
-// classify is the only place the LLM is used: it turns a free-form message into a service and pre-filled form fields.
 func (t *turn) classify(text string) error {
 	services, err := t.e.backend.ActiveServices(t.ctx, t.autoserviceID)
 	if err != nil {
@@ -356,7 +340,6 @@ func (t *turn) classify(text string) error {
 	if len(services) == 0 {
 		return t.noServices()
 	}
-	// Later messages add to the first one instead of replacing it: the first usually describes the problem best.
 	if t.st.Message != "" {
 		text = t.st.Message + "\n" + text
 	}
@@ -371,7 +354,6 @@ func (t *turn) classify(text string) error {
 		}
 		ext, err = t.e.extractor.Extract(t.ctx, ExtractInput{Autoservice: a.Name, Services: services, Message: t.st.Message})
 		if err != nil {
-			// The dialog must go on without the LLM: the client picks the service by hand.
 			t.e.log.Warn("llm extraction failed", "autoservice_id", t.autoserviceID, "error", err)
 		} else {
 			understood = true
@@ -383,7 +365,6 @@ func (t *turn) classify(text string) error {
 			if err := t.startForm(svc, ext); err != nil {
 				return err
 			}
-			// The LLM may have guessed wrong: the way out is right under the first question.
 			if t.st.Step == stepField && len(services) > 1 {
 				msg := &t.res.Messages[len(t.res.Messages)-1]
 				msg.Buttons = append(msg.Buttons, []Button{{Text: "Другая услуга", Data: cbOther + ":" + t.st.DraftID.String()}})
@@ -453,7 +434,6 @@ func (t *turn) askService(services []domain.Service, text string) {
 }
 
 func (t *turn) startForm(svc domain.Service, ext Extraction) error {
-	// Picking another service restarts the form but is still the same attempt of the client.
 	if t.st.DraftID == uuid.Nil {
 		count(`bot_drafts_total{event="started"}`)
 	}
@@ -478,7 +458,6 @@ func (t *turn) startForm(svc domain.Service, ext Extraction) error {
 	return t.advance(svc, fmt.Sprintf("Оформляю заявку: <b>%s</b>.", esc(svc.Name)))
 }
 
-// service returns the service of the draft, or false if it was deleted or switched off meanwhile.
 func (t *turn) service() (domain.Service, bool, error) {
 	services, err := t.e.backend.ActiveServices(t.ctx, t.autoserviceID)
 	if err != nil {
@@ -505,7 +484,6 @@ func (t *turn) nextMissing(svc domain.Service) (domain.FormField, bool) {
 	return domain.FormField{}, false
 }
 
-// advance moves the dialog to the next thing the request still lacks: a form field, the phone, or the confirmation.
 func (t *turn) advance(svc domain.Service, intro string) error {
 	if f, ok := t.nextMissing(svc); ok {
 		t.askField(f, intro)
@@ -651,7 +629,6 @@ func (t *turn) submit() error {
 	if !ok {
 		return err
 	}
-	// The owner may have added a required field while the client was filling the form.
 	if _, missing := t.nextMissing(svc); missing || t.st.Phone == "" {
 		return t.advance(svc, "Осталось уточнить ещё кое-что.")
 	}
@@ -664,7 +641,6 @@ func (t *turn) submit() error {
 		Phone:       t.st.Phone,
 	})
 	if errors.Is(err, domain.ErrTooManyRequests) {
-		// The draft stays: the client can send it with the same button once the limit allows.
 		t.res.ClearButtons = false
 		t.say(fmt.Sprintf("Вы уже оставили %d заявок за сутки. Мастер свяжется с вами по ним; новую можно будет отправить позже.",
 			domain.MaxRequestsPerClientPerDay))
@@ -682,7 +658,6 @@ func (t *turn) submit() error {
 	return nil
 }
 
-// notifyMasters queues a message to every subscribed master. A failure here must not fail the client's request.
 func (t *turn) notifyMasters(text string, req domain.Request) {
 	recipients, err := t.e.backend.Recipients(t.ctx, t.autoserviceID)
 	if err != nil {
@@ -775,7 +750,6 @@ func (t *turn) cancelRequest(arg string) error {
 
 const staleButton = "Эта кнопка уже неактуальна"
 
-// picked records the pressed option in the message that carried the buttons, so the chat history stays readable.
 func (t *turn) picked(label string) {
 	t.res.ClearButtons = true
 	if t.in.MessageText != "" {
@@ -783,7 +757,6 @@ func (t *turn) picked(label string) {
 	}
 }
 
-// onCallback handles an inline button. Buttons of earlier steps stay in the chat, so every action checks the current step.
 func (t *turn) onCallback() error {
 	action, arg, _ := strings.Cut(t.in.Callback, ":")
 	if action == cbCancelReq {
@@ -800,7 +773,6 @@ func (t *turn) onCallback() error {
 		cbBack:      {stepEdit},
 		cbOther:     {stepField, stepPhone, stepConfirm},
 	}
-	// Buttons of a question belong to its field, buttons of the summary to the draft.
 	fresh := true
 	switch action {
 	case cbOption, cbSkip:
@@ -926,7 +898,6 @@ func containsStep(steps []step, s step) bool {
 	return false
 }
 
-// shortWord normalizes a one-word reply such as "Спасибо!" for matching against fixed lists.
 func shortWord(text string) string { return strings.Trim(strings.ToLower(text), " .,!)") }
 
 func isYes(text string) bool {
@@ -950,7 +921,6 @@ const (
 	greetingReply = "Здравствуйте! Напишите, что нужно сделать с машиной."
 )
 
-// smallTalk answers courtesy messages without the LLM, which would only offer the list of services.
 var smallTalk = map[string]string{
 	"спасибо": thanksReply, "спс": thanksReply, "благодарю": thanksReply, "ок": thanksReply,
 	"хорошо": thanksReply, "понял": thanksReply, "поняла": thanksReply, "👍": thanksReply,

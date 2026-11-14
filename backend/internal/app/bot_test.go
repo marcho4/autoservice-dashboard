@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,11 +18,11 @@ import (
 	"github.com/marcho4/autoservice-dashboard/backend/internal/bot"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/gateway/postgres"
+	"github.com/marcho4/autoservice-dashboard/backend/internal/gateway/telegram"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/testkit"
 	"github.com/marcho4/autoservice-dashboard/backend/internal/usecases"
 )
 
-// startRunner runs the real bot runner against the fake Telegram; the returned function stops it and waits.
 func startRunner(a *api) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -52,7 +53,6 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// chat is one Telegram user talking to a bot.
 type chat struct {
 	a     *api
 	token string
@@ -60,7 +60,6 @@ type chat struct {
 	last  testkit.SentMessage
 }
 
-// next waits for the bot's next message in this chat and checks what it says.
 func (c *chat) next(parts ...string) *chat {
 	c.a.t.Helper()
 	m, err := c.a.tg.NextMessage(c.token, c.user.ID, 10*time.Second)
@@ -91,7 +90,6 @@ func (c *chat) click(label string) *chat {
 func TestBotEndToEnd(t *testing.T) {
 	a := setup(t)
 
-	// Onboarding as the owner sees it: register, paste the token — the bot starts by itself.
 	r := a.do("POST", "/api/v1/auth/register", "", map[string]string{
 		"email": "owner@example.com", "password": "password123", "full_name": "Иван", "autoservice_name": "Гараж №1"})
 	expect(t, r, 201, "register")
@@ -105,7 +103,6 @@ func TestBotEndToEnd(t *testing.T) {
 	}
 	eventually(t, "bot is running", func() bool { return botStatus() == "running:" })
 
-	// The fake LLM answers with field IDs of the real catalog, the way a model reading the prompt would.
 	oil := items(a.do("GET", "/api/v1/services", tok, nil))[1]
 	if oil["name"] != "Техобслуживание и замена масла" {
 		t.Fatalf("unexpected catalog: %v", oil)
@@ -115,7 +112,6 @@ func TestBotEndToEnd(t *testing.T) {
 		f := f.(map[string]any)
 		fieldID[f["label"].(string)] = f["id"].(string)
 	}
-	// The model also names a field the form does not have: it must be dropped, not stored.
 	a.llm.SetReply(func(system, user string) (int, string) {
 		if !strings.Contains(user, "масло") {
 			return http.StatusOK, `{"service": null, "fields": {}, "phone": null}`
@@ -124,7 +120,6 @@ func TestBotEndToEnd(t *testing.T) {
 			fieldID["Автомобиль"])
 	})
 
-	// A master subscribes to notifications with the one-time link from the dashboard.
 	master := &chat{a: a, token: tokenA, user: testkit.TelegramUser{ID: 7, FirstName: "Мастер"}}
 	notifyLink := a.do("GET", "/api/v1/autoservice/bot", tok, nil).body["notify_link"].(string)
 	payload := notifyLink[strings.Index(notifyLink, "start=")+len("start="):]
@@ -136,7 +131,6 @@ func TestBotEndToEnd(t *testing.T) {
 		t.Fatalf("master must be subscribed and the link rotated: %v", b.body)
 	}
 
-	// The client's side of the dialog.
 	client := &chat{a: a, token: tokenA, user: testkit.TelegramUser{ID: 42, FirstName: "Пётр", Username: "petya"}}
 	client.say("/start").next("Здравствуйте! Чем могу помочь?")
 	client.say("Добрый день").next("Здравствуйте! Напишите, что нужно сделать с машиной.")
@@ -154,7 +148,6 @@ func TestBotEndToEnd(t *testing.T) {
 		t.Fatalf("the prompt must describe the autoservice and its forms:\n%s", last.System)
 	}
 
-	// The dialog state is in the database: a restart of the runner in the middle loses nothing.
 	stop()
 	client.say("Замена масла и фильтров")
 	startRunner(a)
@@ -183,7 +176,6 @@ func TestBotEndToEnd(t *testing.T) {
 		t.Fatalf("LLM is used only to recognize free-form messages, got %d calls", n)
 	}
 
-	// The request is in the CRM with the client and the answers; the master got it in Telegram.
 	list := a.do("GET", "/api/v1/requests", tok, nil)
 	expect(t, list, 200, "list requests")
 	if list.body["total"].(float64) != 1 {
@@ -202,7 +194,6 @@ func TestBotEndToEnd(t *testing.T) {
 	}
 	master.next("Новая заявка №1", "Техобслуживание и замена масла", "Toyota Camry 2015", "Пётр @petya", "+79001112233")
 
-	// The client follows the request from the bot; once the master took it, it cannot be cancelled there.
 	client.say("/my").next("№1 · Техобслуживание и замена масла — ждёт мастера")
 	expect(t, a.do("POST", "/api/v1/requests/"+req["id"].(string)+"/take", tok, nil), 200, "take")
 	client.click("Отменить №1")
@@ -212,14 +203,12 @@ func TestBotEndToEnd(t *testing.T) {
 	})
 	client.say("/my").next("в работе")
 
-	// Deleting the service keeps the request readable.
 	expect(t, a.do("DELETE", "/api/v1/services/"+oil["id"].(string), tok, nil), 204, "delete service")
 	got := a.do("GET", "/api/v1/requests/"+req["id"].(string), tok, nil)
 	if got.body["service_id"] != nil || got.body["service_name"] != "Техобслуживание и замена масла" || len(got.body["answers"].([]any)) != 2 {
 		t.Fatalf("request must survive its service: %v", got.body)
 	}
 
-	// The owner replaces the bot: the runner switches to the new token without a restart.
 	expect(t, a.do("PUT", "/api/v1/autoservice/bot", tok, map[string]string{"token": tokenB}), 200, "replace bot")
 	eventually(t, "new bot is polled and the old one is not", func() bool {
 		return a.tg.Polling(tokenB) == 1 && a.tg.Polling(tokenA) == 0 && botStatus() == "running:"
@@ -230,7 +219,6 @@ func TestBotEndToEnd(t *testing.T) {
 	clientB := &chat{a: a, token: tokenB, user: client.user}
 	clientB.say("/start").next("Здравствуйте! Чем могу помочь?")
 
-	// A revoked token shows up in the dashboard instead of failing silently.
 	a.tg.RemoveBot(tokenB)
 	eventually(t, "revoked token is reported", func() bool { return botStatus() == "error:unauthorized" })
 
@@ -246,7 +234,6 @@ func TestOnlyOneRunnerPollsTelegram(t *testing.T) {
 	stopFirst := startRunner(a)
 	eventually(t, "first runner polls", func() bool { return a.tg.Polling(tokenA) == 1 })
 	startRunner(a)
-	// Two replicas are up, but Telegram must see a single consumer per bot.
 	for range 20 {
 		time.Sleep(25 * time.Millisecond)
 		if n := a.tg.Polling(tokenA); n > 1 {
@@ -254,7 +241,6 @@ func TestOnlyOneRunnerPollsTelegram(t *testing.T) {
 		}
 	}
 
-	// When the leader goes away, the standby takes over.
 	stopFirst()
 	eventually(t, "second runner takes over", func() bool { return a.tg.Polling(tokenA) == 1 })
 	client := &chat{a: a, token: tokenA, user: testkit.TelegramUser{ID: 42, FirstName: "Пётр"}}
@@ -263,7 +249,6 @@ func TestOnlyOneRunnerPollsTelegram(t *testing.T) {
 
 func TestBotIsReportedRunningBeforeFirstPollReturns(t *testing.T) {
 	a := setup(t)
-	// Production timing: an idle long poll returns only after tens of seconds.
 	a.cfg.Runner.PollTimeout = 30 * time.Second
 	tok := register(a, "owner@example.com")
 	expect(t, a.do("POST", "/api/v1/autoservice", tok, map[string]string{"name": "Гараж"}), 201, "create autoservice")
@@ -279,7 +264,6 @@ func TestBotIsReportedRunningBeforeFirstPollReturns(t *testing.T) {
 	}
 }
 
-// flakyState loses the next save, like a database blip right after the request was created.
 type flakyState struct {
 	*postgres.ConversationRepo
 	fail bool
@@ -357,7 +341,6 @@ func TestSubmitAfterLostStateDoesNotDuplicateTheRequest(t *testing.T) {
 		t.Fatalf("one draft must make one request, got %v", total)
 	}
 
-	// The repeated submit did not use up a number, and nobody else can claim the draft.
 	next, err := service.CreateRequest(ctx, autoserviceID, who, domain.RequestInput{ServiceName: "Ремонт", Phone: "+79001112233"})
 	if err != nil || next.Number != 2 {
 		t.Fatalf("the next request must get number 2, got %d, %v", next.Number, err)
@@ -385,7 +368,6 @@ func TestAbandonedDialogStartsOver(t *testing.T) {
 		}
 	}
 	age()
-	// A day later the message is a new request, not the answer to the forgotten question.
 	client.say("Kia Rio").next("какая услуга вам нужна")
 
 	age()
@@ -398,15 +380,15 @@ func TestAbandonedDialogStartsOver(t *testing.T) {
 	}
 }
 
-func TestShutdownCutsLongHandlersAndDropsQueuedUpdates(t *testing.T) {
+func TestShutdownKeepsQueuedUpdatesForRestart(t *testing.T) {
 	a := setup(t)
 	a.cfg.Runner.HandleGrace = time.Second
 	tok := register(a, "owner@example.com")
 	expect(t, a.do("POST", "/api/v1/autoservice", tok, map[string]string{"name": "Гараж"}), 201, "create autoservice")
 	expect(t, a.do("PUT", "/api/v1/autoservice/bot", tok, map[string]string{"token": tokenA}), 200, "connect bot")
-	// The LLM hangs for one client and answers the other once the runner is stopping.
 	hang, answer := make(chan struct{}), make(chan struct{})
-	t.Cleanup(func() { close(hang) })
+	release := sync.OnceFunc(func() { close(hang) })
+	t.Cleanup(release)
 	a.llm.SetReply(func(_, user string) (int, string) {
 		select {
 		case <-hang:
@@ -445,8 +427,67 @@ func TestShutdownCutsLongHandlersAndDropsQueuedUpdates(t *testing.T) {
 		replies = append(replies, m.Text)
 	}
 	if got := strings.Join(replies, "\n---\n"); !strings.Contains(got, "какая услуга вам нужна") || strings.Contains(got, "Чем могу помочь") {
-		t.Fatalf("the update being handled must be finished and the queued one dropped, the bot sent:\n%s", got)
+		t.Fatalf("only the update being handled must finish before shutdown, the bot sent:\n%s", got)
 	}
+	var pending int
+	if err := a.pool.QueryRow(context.Background(), `SELECT count(*) FROM bot_updates`).Scan(&pending); err != nil || pending != 2 {
+		t.Fatalf("both unfinished updates must survive: pending=%d, error=%v", pending, err)
+	}
+	release()
+	startRunner(a)
+	stuck.next("какая услуга вам нужна")
+	busy.next("какая услуга вам нужна").next("Здравствуйте! Чем могу помочь?")
+	eventually(t, "saved updates are consumed after restart", func() bool {
+		return a.pool.QueryRow(context.Background(), `SELECT count(*) FROM bot_updates`).Scan(&pending) == nil && pending == 0
+	})
+}
+
+type blockedUpdateStore struct {
+	*postgres.UpdateRepo
+	entered chan struct{}
+}
+
+func (s blockedUpdateStore) Save(ctx context.Context, b domain.Bot, updates []telegram.Update) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	close(s.entered)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestUpdateIsNotAcknowledgedWhenInboxSaveFails(t *testing.T) {
+	a := setup(t)
+	tok := register(a, "owner@example.com")
+	expect(t, a.do("POST", "/api/v1/autoservice", tok, map[string]string{"name": "Garage"}), 201, "create autoservice")
+	expect(t, a.do("PUT", "/api/v1/autoservice/bot", tok, map[string]string{"token": tokenA}), 200, "connect bot")
+	service := usecases.NewBotRunnerService(postgres.NewBotRepo(a.pool), postgres.NewAutoserviceRepo(a.pool), postgres.NewServiceRepo(a.pool), postgres.NewClientRepo(a.pool), postgres.NewRequestRepo(a.pool))
+	store := blockedUpdateStore{UpdateRepo: postgres.NewUpdateRepo(a.pool), entered: make(chan struct{})}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	engine := bot.NewEngine(service, postgres.NewConversationRepo(a.pool), nil, "", log)
+	runner := bot.NewRunner(telegram.New(a.cfg.TelegramAPIURL), service, engine, store, postgres.NewLeaderLock(a.pool), a.cfg.Runner, log)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = runner.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	client := &chat{a: a, token: tokenA, user: testkit.TelegramUser{ID: 42, FirstName: "Client"}}
+	client.say("/start")
+	select {
+	case <-store.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("inbox save did not start")
+	}
+	cancel()
+	<-done
+	if pending := a.tg.Pending(tokenA); pending != 1 {
+		t.Fatalf("an unsaved update must remain at Telegram, got %d", pending)
+	}
+	if sent := len(a.tg.Sent(tokenA, client.user.ID)); sent != 0 {
+		t.Fatalf("an unsaved update must not be handled, got %d replies", sent)
+	}
+	startRunner(a)
+	client.next("Здравствуйте! Чем могу помочь?")
+	eventually(t, "saved update is acknowledged", func() bool { return a.tg.Pending(tokenA) == 0 })
 }
 
 func TestBotProfileDescribesTheAutoservice(t *testing.T) {

@@ -19,7 +19,6 @@ import {
 
 const PAGE_SIZE = 20;
 const REFRESH_MS = 15000;
-// A filter names a group of requests, so the labels are plural, unlike the status of a single request.
 const FILTERS: { status: RequestStatus | ""; label: string }[] = [
   { status: "", label: "Все" },
   { status: "new", label: "Новые" },
@@ -40,18 +39,24 @@ export default function RequestsPage() {
   const [busyId, setBusyId] = useState("");
 
   useEffect(() => {
+    let active = true;
     const q = new URLSearchParams({ sort, limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
     if (status) q.set("status", status);
     api
       .get<RequestPage>(`requests?${q}`)
       .then((d) => {
+        if (!active) return;
         setData(d);
         setError(null);
       })
-      .catch(setError);
+      .catch((e) => {
+        if (active) setError(e);
+      });
+    return () => {
+      active = false;
+    };
   }, [status, sort, page, reload]);
 
-  // Requests arrive from the bot at any moment: keep the list fresh while the tab is open.
   useEffect(() => {
     const id = setInterval(() => {
       if (!document.hidden) setReload((n) => n + 1);
@@ -99,7 +104,6 @@ export default function RequestsPage() {
               <Icon name={sort === "desc" ? "down" : "up"} />
               {sort === "desc" ? "Сначала новые" : "Сначала старые"}
             </Button>
-            {/* The list refreshes itself every 15 seconds; on a phone the button would only push the requests down. */}
             <span className="hidden sm:block">
               <Button variant="secondary" size="sm" onClick={() => setReload((n) => n + 1)}>
                 Обновить
@@ -111,7 +115,6 @@ export default function RequestsPage() {
         Заявки
       </PageTitle>
 
-      {/* One row that scrolls sideways on a phone, so the first request stays on the first screen. */}
       <div className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0">
         {FILTERS.map((f) => {
           const count = data ? (f.status ? data.counts[f.status] : all) : 0;
@@ -155,7 +158,6 @@ export default function RequestsPage() {
         </Empty>
       )}
 
-      {/* Phone: the whole card opens the request, the phone number is a button of its own. */}
       {data && data.items.length > 0 && (
         <ul className={`sm:hidden ${listClass}`}>
           {data.items.map((r) => (
@@ -183,7 +185,6 @@ export default function RequestsPage() {
         </ul>
       )}
 
-      {/* Desktop: status first to scan the column, then what is asked and whom to call. */}
       {data && data.items.length > 0 && (
         <Table>
           <thead>

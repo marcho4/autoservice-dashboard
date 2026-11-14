@@ -108,11 +108,10 @@ type botDTO struct {
 	Status        domain.BotStatus `json:"status"`
 	StatusError   string           `json:"status_error"`
 	StatusAt      time.Time        `json:"status_at"`
-	// NotifyLink is the one-time deep link a master opens to get new requests in Telegram.
-	NotifyLink  string         `json:"notify_link"`
-	Recipients  []recipientDTO `json:"recipients"`
-	ConnectedAt time.Time      `json:"connected_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
+	NotifyLink    string           `json:"notify_link"`
+	Recipients    []recipientDTO   `json:"recipients"`
+	ConnectedAt   time.Time        `json:"connected_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
 }
 
 func toBot(d usecases.BotDetails) botDTO {

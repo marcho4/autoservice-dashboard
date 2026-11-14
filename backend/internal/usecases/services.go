@@ -8,7 +8,6 @@ import (
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 )
 
-// CatalogService lets the owner manage the services of the autoservice and the form the bot fills for each of them.
 type CatalogService struct {
 	autoservices *AutoserviceService
 	services     ServiceRepository
@@ -38,7 +37,6 @@ func (s *CatalogService) Create(ctx context.Context, employeeID uuid.UUID, in do
 	return s.services.Create(ctx, a.ID, in)
 }
 
-// CreateDefaults restores the starter catalog for an autoservice that has no services.
 func (s *CatalogService) CreateDefaults(ctx context.Context, employeeID uuid.UUID) ([]domain.Service, error) {
 	a, err := s.autoservices.Get(ctx, employeeID)
 	if err != nil {

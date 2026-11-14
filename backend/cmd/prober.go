@@ -37,8 +37,6 @@ func probe(ctx context.Context) error {
 }
 
 func MakeProbes(ctx context.Context, client *http.Client, cfg config.Config) {
-	// Заводим счётчики заранее с нулём: иначе fail-серия появляется только после первой ошибки,
-	// и rate() не видит первый инкремент.
 	for service := range cfg.ProbeTargets {
 		metrics.GetOrCreateCounter(fmt.Sprintf(`prober_check{service=%q,result="ok"}`, service))
 		metrics.GetOrCreateCounter(fmt.Sprintf(`prober_check{service=%q,result="fail"}`, service))

@@ -36,7 +36,6 @@ func fieldsJSON(fields []domain.FormField) []byte {
 	return b
 }
 
-// insertServices appends services after the existing ones, keeping the order of the slice.
 func insertServices(ctx context.Context, tx pgx.Tx, autoserviceID uuid.UUID, services []domain.ServiceInput) error {
 	for _, s := range services {
 		if _, err := tx.Exec(ctx,
@@ -66,7 +65,6 @@ func (r *ServiceRepo) Get(ctx context.Context, autoserviceID, id uuid.UUID) (dom
 		`SELECT `+serviceColumns+` FROM services WHERE autoservice_id = $1 AND id = $2`, autoserviceID, id))
 }
 
-// Create adds a service to the end of the catalog unless the catalog is already at its size limit.
 func (r *ServiceRepo) Create(ctx context.Context, autoserviceID uuid.UUID, in domain.ServiceInput) (domain.Service, error) {
 	out, err := scanService(r.db.QueryRow(ctx,
 		`INSERT INTO services (autoservice_id, name, description, is_active, fields, position)
@@ -81,11 +79,9 @@ func (r *ServiceRepo) Create(ctx context.Context, autoserviceID uuid.UUID, in do
 	return out, err
 }
 
-// CreateDefaults fills an empty catalog; it refuses to touch a catalog that already has services.
 func (r *ServiceRepo) CreateDefaults(ctx context.Context, autoserviceID uuid.UUID, services []domain.ServiceInput) error {
 	return pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
 		var exists bool
-		// The row lock serializes concurrent calls for one autoservice.
 		if err := tx.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM services WHERE autoservice_id = a.id)
 			 FROM autoservices a WHERE a.id = $1 FOR UPDATE`, autoserviceID).Scan(&exists); err != nil {
@@ -109,7 +105,6 @@ func (r *ServiceRepo) Delete(ctx context.Context, autoserviceID, id uuid.UUID) e
 	return affectedOrNotFound(r.db.Exec(ctx, `DELETE FROM services WHERE autoservice_id = $1 AND id = $2`, autoserviceID, id))
 }
 
-// Reorder puts the listed services first, in the given order; services missing from the list keep their relative order after them.
 func (r *ServiceRepo) Reorder(ctx context.Context, autoserviceID uuid.UUID, ids []uuid.UUID) error {
 	_, err := r.db.Exec(ctx,
 		`WITH ranked AS (

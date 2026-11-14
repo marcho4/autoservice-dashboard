@@ -4,8 +4,6 @@ import { FormEvent, useState } from "react";
 import { Actions, Alert, Button, Field } from "@/components/ui";
 import { api, Bot, errorText } from "@/lib/api";
 
-// Token input shared by the onboarding and the settings page. The backend verifies the token with Telegram
-// and the bot runner starts polling on its own, so there is nothing else to do after a successful submit.
 export default function BotTokenForm({
   label = "Токен бота",
   submitLabel = "Подключить бота",

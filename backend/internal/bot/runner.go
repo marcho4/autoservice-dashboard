@@ -17,7 +17,6 @@ import (
 	"github.com/marcho4/autoservice-dashboard/backend/internal/gateway/telegram"
 )
 
-// Telegram is the part of the Bot API the runner uses.
 type Telegram interface {
 	Setup(ctx context.Context, token string, commands []telegram.BotCommand) error
 	SetDescription(ctx context.Context, token, description, shortDescription string) error
@@ -29,7 +28,6 @@ type Telegram interface {
 	SendTyping(ctx context.Context, token string, chatID int64) error
 }
 
-// Registry is the list of connected bots; the runner reports back what it sees for each of them.
 type Registry interface {
 	ListBots(ctx context.Context) ([]domain.Bot, error)
 	Autoservice(ctx context.Context, autoserviceID uuid.UUID) (domain.Autoservice, error)
@@ -37,18 +35,21 @@ type Registry interface {
 	RemoveRecipient(ctx context.Context, autoserviceID uuid.UUID, chatID int64) error
 }
 
-// Leader makes sure only one runner in the whole deployment polls Telegram.
 type Leader interface {
 	Acquire(ctx context.Context) (lost <-chan struct{}, release func(), err error)
 }
 
+type UpdateStore interface {
+	Save(ctx context.Context, bot domain.Bot, updates []telegram.Update) error
+	Pending(ctx context.Context, bot domain.Bot) ([]telegram.Update, error)
+	Delete(ctx context.Context, bot domain.Bot, updateID int64) error
+}
+
 type RunnerConfig struct {
-	// ReconcileInterval is how often the runner re-reads the bot list, i.e. how fast a pasted token turns into a running bot.
 	ReconcileInterval time.Duration
 	PollTimeout       time.Duration
 	HandleTimeout     time.Duration
-	// HandleGrace is how long updates already being handled may still run once the bot stops.
-	HandleGrace time.Duration
+	HandleGrace       time.Duration
 }
 
 func (c RunnerConfig) withDefaults() RunnerConfig {
@@ -67,19 +68,18 @@ func (c RunnerConfig) withDefaults() RunnerConfig {
 	return c
 }
 
-// Runner keeps one long-polling loop per connected bot. Bots appear and disappear at runtime as owners connect,
-// replace and disconnect tokens in the dashboard; nobody has to restart anything.
 type Runner struct {
 	tg       Telegram
 	registry Registry
 	engine   *Engine
+	updates  UpdateStore
 	leader   Leader
 	cfg      RunnerConfig
 	log      *slog.Logger
 }
 
-func NewRunner(tg Telegram, registry Registry, engine *Engine, leader Leader, cfg RunnerConfig, log *slog.Logger) *Runner {
-	return &Runner{tg: tg, registry: registry, engine: engine, leader: leader, cfg: cfg.withDefaults(), log: log}
+func NewRunner(tg Telegram, registry Registry, engine *Engine, updates UpdateStore, leader Leader, cfg RunnerConfig, log *slog.Logger) *Runner {
+	return &Runner{tg: tg, registry: registry, engine: engine, updates: updates, leader: leader, cfg: cfg.withDefaults(), log: log}
 }
 
 var commands = []telegram.BotCommand{
@@ -88,7 +88,6 @@ var commands = []telegram.BotCommand{
 	{Command: "cancel", Description: "Отменить заполнение заявки"},
 }
 
-// Run blocks until ctx is cancelled. While another replica holds the leadership it just waits for its turn.
 func (r *Runner) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		lost, release, err := r.leader.Acquire(ctx)
@@ -122,7 +121,6 @@ type botProc struct {
 	done   chan struct{}
 }
 
-// supervise reconciles the running polling loops with the bots table until ctx is cancelled.
 func (r *Runner) supervise(ctx context.Context) {
 	running := map[uuid.UUID]*botProc{}
 	stop := func(id uuid.UUID) {
@@ -131,7 +129,6 @@ func (r *Runner) supervise(ctx context.Context) {
 		delete(running, id)
 	}
 	defer func() {
-		// All bots wind down at once: each may take up to HandleGrace.
 		for _, proc := range running {
 			proc.cancel()
 		}
@@ -190,26 +187,74 @@ func (r *Runner) supervise(ctx context.Context) {
 	}
 }
 
-// poll is the life of one bot: prepare it, then long-poll and dispatch updates until the bot is removed or replaced.
 func (r *Runner) poll(ctx context.Context, bot domain.Bot) {
 	log := r.log.With("bot", bot.Username, "autoservice_id", bot.AutoserviceID)
 	log.Info("bot started")
 	defer log.Info("bot stopped")
 
 	chats := newChatQueue(log)
-	// An update already taken from Telegram is handled to the end even during shutdown, but only for HandleGrace.
 	handleCtx, stopHandlers := context.WithCancel(context.WithoutCancel(ctx))
+	stopGrace := context.AfterFunc(ctx, func() {
+		time.AfterFunc(r.cfg.HandleGrace, stopHandlers)
+	})
 	defer func() {
-		grace := time.AfterFunc(r.cfg.HandleGrace, stopHandlers)
 		chats.wait()
-		grace.Stop()
+		stopGrace()
 		stopHandlers()
 	}()
+	var queuedMu sync.Mutex
+	queued := map[int64]bool{}
+	dispatch := func(pending []telegram.Update) {
+		blocked := map[int64]bool{}
+		for _, u := range pending {
+			chatID, ok := chatOf(u)
+			if !ok {
+				if err := r.updates.Delete(ctx, bot, u.UpdateID); err != nil {
+					log.Error("delete ignored update", "error", err)
+				}
+				continue
+			}
+			if blocked[chatID] {
+				continue
+			}
+			queuedMu.Lock()
+			if queued[u.UpdateID] {
+				queuedMu.Unlock()
+				continue
+			}
+			queued[u.UpdateID] = true
+			queuedMu.Unlock()
+			if !chats.submit(chatID, func() {
+				defer func() {
+					queuedMu.Lock()
+					delete(queued, u.UpdateID)
+					queuedMu.Unlock()
+				}()
+				for ctx.Err() == nil {
+					hctx, cancel := context.WithTimeout(handleCtx, r.cfg.HandleTimeout)
+					err := r.handle(hctx, bot, u, log)
+					if err == nil {
+						err = r.updates.Delete(hctx, bot, u.UpdateID)
+					}
+					cancel()
+					if err == nil {
+						return
+					}
+					log.Warn("retry saved bot update", "update_id", u.UpdateID, "error", err)
+					sleep(ctx, time.Second)
+				}
+			}) {
+				queuedMu.Lock()
+				delete(queued, u.UpdateID)
+				queuedMu.Unlock()
+				blocked[chatID] = true
+			}
+		}
+	}
 
 	ready := false
 	var offset int64
 	failures := 0
-	// The status is written only when it changes, not on every poll.
 	reported := ""
 	report := func(status domain.BotStatus, reason string) {
 		if key := string(status) + ":" + reason; key != reported {
@@ -218,19 +263,27 @@ func (r *Runner) poll(ctx context.Context, bot domain.Bot) {
 		}
 	}
 	for ctx.Err() == nil {
+		pending, err := r.updates.Pending(ctx, bot)
+		if err != nil {
+			log.Error("load saved bot updates", "error", err)
+			sleep(ctx, time.Second)
+			continue
+		}
+		dispatch(pending)
 		var updates []telegram.Update
-		var err error
+		pollTimeout := r.cfg.PollTimeout
+		if len(pending) > 0 {
+			pollTimeout = min(pollTimeout, time.Second)
+		}
 		if !ready {
 			if err = r.tg.Setup(ctx, bot.Token, commands); err == nil {
 				ready = true
 				r.describe(ctx, bot, log)
-				// Telegram accepted the token: the owner should see the bot as running now,
-				// not when the first long poll returns half a minute later.
 				report(domain.BotRunning, "")
 			}
 		}
 		if ready {
-			updates, err = r.tg.GetUpdates(ctx, bot.Token, offset, r.cfg.PollTimeout)
+			updates, err = r.tg.GetUpdates(ctx, bot.Token, offset, pollTimeout)
 		}
 		if ctx.Err() != nil {
 			return
@@ -238,7 +291,6 @@ func (r *Runner) poll(ctx context.Context, bot domain.Bot) {
 		if err != nil {
 			failures++
 			reason, pause := classifyPollError(err, failures)
-			// A single network blip is not worth alarming the owner in the dashboard.
 			if reason != domain.BotErrUnavailable || failures >= 3 {
 				report(domain.BotError, reason)
 			}
@@ -249,26 +301,17 @@ func (r *Runner) poll(ctx context.Context, bot domain.Bot) {
 		failures = 0
 		report(domain.BotRunning, "")
 
+		if err := r.updates.Save(ctx, bot, updates); err != nil {
+			log.Error("save bot updates before acknowledgment", "error", err)
+			sleep(ctx, time.Second)
+			continue
+		}
 		for _, u := range updates {
 			offset = u.UpdateID + 1
-			chatID, ok := chatOf(u)
-			if !ok {
-				continue
-			}
-			chats.submit(chatID, func() {
-				// Updates still queued when the bot stops are dropped.
-				if ctx.Err() != nil {
-					return
-				}
-				hctx, cancel := context.WithTimeout(handleCtx, r.cfg.HandleTimeout)
-				defer cancel()
-				r.handle(hctx, bot, u, log)
-			})
 		}
 	}
 }
 
-// describe fills the bot profile a client sees before the first message. The bot works without it, so errors are only logged.
 func (r *Runner) describe(ctx context.Context, bot domain.Bot, log *slog.Logger) {
 	a, err := r.registry.Autoservice(ctx, bot.AutoserviceID)
 	if err != nil {
@@ -286,7 +329,6 @@ func (r *Runner) describe(ctx context.Context, bot domain.Bot, log *slog.Logger)
 	if len(contacts) > 0 {
 		description += "\n" + strings.Join(contacts, " ")
 	}
-	// Telegram limits: 512 characters for the description, 120 for the short one.
 	short := fmt.Sprintf("Заявки в автосервис «%s»", truncate(a.Name, 96))
 	if err := r.tg.SetDescription(ctx, bot.Token, truncate(description, 511), short); err != nil && ctx.Err() == nil {
 		log.Warn("bot description: set", "error", err)
@@ -316,7 +358,6 @@ func sleep(ctx context.Context, d time.Duration) {
 	}
 }
 
-// chatOf returns the private chat an update belongs to. Groups and channels are ignored: the bot talks to clients one to one.
 func chatOf(u telegram.Update) (int64, bool) {
 	switch {
 	case u.Message != nil && u.Message.From != nil && u.Message.Chat.Type == "private":
@@ -331,7 +372,14 @@ func identity(u telegram.User) domain.ClientIdentity {
 	return domain.ClientIdentity{TelegramID: u.ID, TelegramUsername: u.Username, Name: u.FullName()}
 }
 
-func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, log *slog.Logger) {
+func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, log *slog.Logger) (handleErr error) {
+	defer func() {
+		if p := recover(); p != nil {
+			handleErr = fmt.Errorf("bot update panic: %v", p)
+			metrics.GetOrCreateCounter("bot_update_errors_total").Inc()
+			log.Error("bot update panic", "error", handleErr, "stack", string(debug.Stack()))
+		}
+	}()
 	var in Incoming
 	kind := "message"
 	switch {
@@ -345,12 +393,13 @@ func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, 
 		if m.Contact != nil {
 			in.Contact = m.Contact.PhoneNumber
 		}
-		// Recognizing a free-form message takes a few seconds of LLM time; show the client that the bot is working.
 		go func() { _ = r.tg.SendTyping(ctx, bot.Token, in.ChatID) }()
 	}
 	metrics.GetOrCreateCounter(`bot_updates_total{kind="` + kind + `"}`).Inc()
 
+	in.UpdateID, in.BotID = u.UpdateID, bot.TelegramBotID
 	res, err := r.engine.Handle(ctx, bot.AutoserviceID, in)
+	handleErr = err
 	if err != nil {
 		metrics.GetOrCreateCounter("bot_update_errors_total").Inc()
 		log.Error("bot failed to handle update", "chat_id", in.ChatID, "error", err)
@@ -387,13 +436,13 @@ func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, 
 			continue
 		}
 		log.Warn("bot failed to send message", "chat_id", m.ChatID, "error", err)
-		// A master who blocked the bot stays unreachable; stop notifying that chat.
 		if m.ChatID != in.ChatID && telegram.ErrorCode(err) == http.StatusForbidden {
 			if err := r.registry.RemoveRecipient(ctx, bot.AutoserviceID, m.ChatID); err != nil {
 				log.Debug("remove unreachable recipient", "error", err)
 			}
 		}
 	}
+	return handleErr
 }
 
 func toTelegram(m Outgoing) telegram.OutMessage {
@@ -420,8 +469,6 @@ const (
 	maxParallelHandlers = 16
 )
 
-// chatQueue runs handlers of different chats in parallel while keeping the updates of one chat in order:
-// the dialog state of a chat is read and written without locks.
 type chatQueue struct {
 	mu      sync.Mutex
 	pending map[int64][]func()
@@ -434,19 +481,17 @@ func newChatQueue(log *slog.Logger) *chatQueue {
 	return &chatQueue{pending: map[int64][]func(){}, slots: make(chan struct{}, maxParallelHandlers), log: log}
 }
 
-func (q *chatQueue) submit(chatID int64, fn func()) {
+func (q *chatQueue) submit(chatID int64, fn func()) bool {
 	q.mu.Lock()
 	queue, busy := q.pending[chatID]
 	if len(queue) >= maxQueuedPerChat {
 		q.mu.Unlock()
-		metrics.GetOrCreateCounter("bot_updates_dropped_total").Inc()
-		q.log.Warn("bot dropped an update: too many queued for the chat", "chat_id", chatID)
-		return
+		return false
 	}
 	q.pending[chatID] = append(queue, fn)
 	q.mu.Unlock()
 	if busy {
-		return
+		return true
 	}
 	q.wg.Add(1)
 	go func() {
@@ -468,9 +513,9 @@ func (q *chatQueue) submit(chatID int64, fn func()) {
 			<-q.slots
 		}
 	}()
+	return true
 }
 
-// run keeps a panic in one handler from taking down the bots of every autoservice.
 func (q *chatQueue) run(chatID int64, fn func()) {
 	defer func() {
 		if p := recover(); p != nil {

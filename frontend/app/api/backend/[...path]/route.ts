@@ -7,7 +7,6 @@ import {
   setSessionCookie,
 } from "@/lib/server/backend";
 
-// Proxies /api/backend/<path> to <BACKEND_URL>/api/v1/<path>, attaching the JWT from the cookie.
 async function handler(req: NextRequest, ctx: RouteContext<"/api/backend/[...path]">) {
   const { path } = await ctx.params;
   const target = `${backendUrl()}/api/v1/${path.map(encodeURIComponent).join("/")}${req.nextUrl.search}`;
@@ -33,7 +32,6 @@ async function handler(req: NextRequest, ctx: RouteContext<"/api/backend/[...pat
   const text = await upstream.text();
   const endpoint = path.join("/");
 
-  // Password change re-issues the token: swap the cookie and hide the token from the browser.
   if (endpoint === "me/password" && upstream.ok) {
     const body = JSON.parse(text);
     const res = NextResponse.json(body.employee, { status: 200 });

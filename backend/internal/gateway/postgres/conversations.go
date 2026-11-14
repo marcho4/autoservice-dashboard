@@ -9,15 +9,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ConversationRepo keeps the bot dialog state of each client chat as an opaque JSON document.
 type ConversationRepo struct{ db *pgxpool.Pool }
 
 func NewConversationRepo(db *pgxpool.Pool) *ConversationRepo { return &ConversationRepo{db: db} }
 
-// conversationTTL: a client who comes back after a day starts a new dialog instead of answering a forgotten question.
 const conversationTTL = `interval '24 hours'`
 
-// Load returns nil when the chat has no saved state or it has expired.
 func (r *ConversationRepo) Load(ctx context.Context, autoserviceID uuid.UUID, chatID int64) ([]byte, error) {
 	var state []byte
 	err := r.db.QueryRow(ctx,
@@ -38,7 +35,6 @@ func (r *ConversationRepo) Save(ctx context.Context, autoserviceID uuid.UUID, ch
 	return err
 }
 
-// DeleteExpired removes the states Load no longer returns, so client data of abandoned dialogs is not kept.
 func (r *ConversationRepo) DeleteExpired(ctx context.Context) error {
 	_, err := r.db.Exec(ctx, `DELETE FROM conversations WHERE updated_at < now() - `+conversationTTL)
 	return err

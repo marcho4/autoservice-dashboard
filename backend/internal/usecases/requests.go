@@ -22,9 +22,8 @@ func NewDashboardService(a *AutoserviceService, c ClientRepository, r RequestRep
 }
 
 type RequestPage struct {
-	Items []domain.RequestWithClient
-	Total int
-	// Counts covers all requests of the autoservice regardless of the filter, for the status tabs.
+	Items  []domain.RequestWithClient
+	Total  int
 	Counts domain.RequestCounts
 }
 
@@ -63,7 +62,6 @@ func (s *DashboardService) ChangeStatus(ctx context.Context, employeeID, request
 	}
 	countStatusChange(to)
 	if current.Status == domain.StatusNew {
-		// The product's promise in one number: how long a client waited for the first reaction of the master.
 		metrics.GetOrCreateHistogram("request_reaction_seconds").Update(time.Since(current.CreatedAt).Seconds())
 	}
 	current.Request = updated

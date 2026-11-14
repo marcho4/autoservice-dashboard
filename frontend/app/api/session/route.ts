@@ -7,7 +7,6 @@ import {
   setSessionCookie,
 } from "@/lib/server/backend";
 
-// POST /api/session — log in (or register with ?register=1) and store the JWT in an httpOnly cookie.
 export async function POST(req: NextRequest) {
   const path = req.nextUrl.searchParams.get("register") ? "register" : "login";
   let upstream: Response;
@@ -29,7 +28,6 @@ export async function POST(req: NextRequest) {
   return res;
 }
 
-// DELETE /api/session — revoke the token on the backend and drop the cookie.
 export async function DELETE(req: NextRequest) {
   const token = req.cookies.get(SESSION_COOKIE)?.value;
   if (token) {

@@ -33,7 +33,6 @@ func TestExtract(t *testing.T) {
 	srv := testkit.NewLLM()
 	defer srv.Close()
 	srv.SetReply(func(string, string) (int, string) {
-		// Models like to wrap JSON in a code fence and to answer numbers as numbers.
 		return http.StatusOK, "```json\n{\"service\": 2, \"fields\": {\"work\": \"Смена шин\", \"size\": 16, \"car1\": null, \"x\": [1]}, \"phone\": \"+7 900 111-22-33\"}\n```"
 	})
 
@@ -116,7 +115,6 @@ func TestExtractFallsBackWithoutJSONMode(t *testing.T) {
 	c := New(Config{BaseURL: srv.URL(), Model: "local"})
 	in := bot.ExtractInput{Services: services, Message: "диагностика"}
 
-	// The first call with response_format is rejected, so every later call goes without it.
 	srv.SetReply(func(string, string) (int, string) {
 		if last := srv.Calls(); last[len(last)-1].JSONMode {
 			return http.StatusBadRequest, "response_format is not supported"

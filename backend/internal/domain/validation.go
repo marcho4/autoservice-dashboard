@@ -46,8 +46,6 @@ func firstError(errs ...error) error {
 	return nil
 }
 
-// NormalizePhone turns any common spelling of a phone number into +<digits>.
-// Russian numbers written as 8XXXXXXXXXX or 9XXXXXXXXX become +7XXXXXXXXXX.
 func NormalizePhone(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if !phoneRe.MatchString(raw) {
@@ -73,7 +71,6 @@ func NormalizePhone(raw string) (string, error) {
 	return "+" + digits, nil
 }
 
-// FormatPhone prints a normalized Russian number as +7 900 111-22-33 and leaves other numbers as is.
 func FormatPhone(phone string) string {
 	if len(phone) == 12 && strings.HasPrefix(phone, "+7") {
 		return phone[:2] + " " + phone[2:5] + " " + phone[5:8] + "-" + phone[8:10] + "-" + phone[10:]

@@ -27,7 +27,6 @@ func (s *AutoserviceService) Get(ctx context.Context, employeeID uuid.UUID) (dom
 	return a, err
 }
 
-// Create registers the autoservice with the starter service catalog, so the bot is useful as soon as its token is connected.
 func (s *AutoserviceService) Create(ctx context.Context, employeeID uuid.UUID, in domain.AutoserviceInput) (domain.Autoservice, error) {
 	in, err := in.Normalize()
 	if err != nil {
@@ -62,7 +61,6 @@ func (s *AutoserviceService) Delete(ctx context.Context, employeeID uuid.UUID) e
 	return s.autoservices.Delete(ctx, a.ID)
 }
 
-// ConnectBot verifies the token with Telegram and saves it; the bot runner notices the new token and starts polling on its own.
 func (s *AutoserviceService) ConnectBot(ctx context.Context, employeeID uuid.UUID, token string) (domain.Bot, error) {
 	token, err := domain.NormalizeBotToken(token)
 	if err != nil {

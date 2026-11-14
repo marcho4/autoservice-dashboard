@@ -1,5 +1,3 @@
-// Package testkit has in-process fakes of the external services: the Telegram Bot API and an OpenAI-compatible LLM.
-// Tests drive the real bot through them the way a Telegram client would.
 package testkit
 
 import (
@@ -20,7 +18,6 @@ type TelegramUser struct {
 	Username  string `json:"username,omitempty"`
 }
 
-// SentMessage is a message the bot sent (or the latest state of one it edited).
 type SentMessage struct {
 	MessageID   int64
 	ChatID      int64
@@ -39,7 +36,6 @@ type SentMessage struct {
 	}
 }
 
-// Button returns the callback data of the inline button with the given text.
 func (m SentMessage) Button(text string) (string, bool) {
 	for _, row := range m.ReplyMarkup.InlineKeyboard {
 		for _, b := range row {
@@ -67,19 +63,17 @@ func (m SentMessage) ButtonTexts() []string {
 }
 
 type fakeBot struct {
-	id       int64
-	username string
-	updates  []map[string]any
-	sent     []SentMessage
-	read     map[int64]int // chat -> how many of its messages the test has consumed
-	toasts   []string
-	polling  int
-	// description and shortDescription are what setMyDescription and setMyShortDescription set.
+	id               int64
+	username         string
+	updates          []map[string]any
+	sent             []SentMessage
+	read             map[int64]int
+	toasts           []string
+	polling          int
 	description      string
 	shortDescription string
 }
 
-// Telegram is a fake Bot API server. Bots are registered by token; anything else gets 401 like the real API.
 type Telegram struct {
 	Server *httptest.Server
 
@@ -96,14 +90,12 @@ func NewTelegram() *Telegram {
 }
 
 func (t *Telegram) Close() {
-	// Long polls would otherwise keep Close waiting for their timeout.
 	t.Server.CloseClientConnections()
 	t.Server.Close()
 }
 
 func (t *Telegram) URL() string { return t.Server.URL }
 
-// AddBot registers a token of the form "<bot id>:<secret>".
 func (t *Telegram) AddBot(token, username string) {
 	id, _ := strconv.ParseInt(strings.SplitN(token, ":", 2)[0], 10, 64)
 	t.mu.Lock()
@@ -111,7 +103,6 @@ func (t *Telegram) AddBot(token, username string) {
 	t.bots[token] = &fakeBot{id: id, username: username, read: map[int64]int{}}
 }
 
-// RemoveBot makes the token invalid, as if the owner revoked it in BotFather.
 func (t *Telegram) RemoveBot(token string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -119,7 +110,6 @@ func (t *Telegram) RemoveBot(token string) {
 	t.broadcast()
 }
 
-// broadcast wakes everything waiting for a change; the caller holds the lock.
 func (t *Telegram) broadcast() {
 	close(t.changed)
 	t.changed = make(chan struct{})
@@ -153,22 +143,18 @@ func (t *Telegram) message(token string, from TelegramUser, extra map[string]any
 	t.push(token, map[string]any{"message": msg})
 }
 
-// SendText delivers a text message from a user to the bot's private chat.
 func (t *Telegram) SendText(token string, from TelegramUser, text string) {
 	t.message(token, from, map[string]any{"text": text})
 }
 
-// SendContact delivers the user's own shared contact.
 func (t *Telegram) SendContact(token string, from TelegramUser, phone string) {
 	t.message(token, from, map[string]any{"contact": map[string]any{"phone_number": phone, "user_id": from.ID}})
 }
 
-// SendPhoto delivers a message without text, which the bot does not understand.
 func (t *Telegram) SendPhoto(token string, from TelegramUser) {
 	t.message(token, from, map[string]any{"photo": []map[string]any{{"file_id": "x"}}})
 }
 
-// Click presses an inline button of a message the bot sent earlier.
 func (t *Telegram) Click(token string, from TelegramUser, msg SentMessage, data string) {
 	t.mu.Lock()
 	t.nextID++
@@ -186,7 +172,6 @@ func (t *Telegram) Click(token string, from TelegramUser, msg SentMessage, data 
 	}})
 }
 
-// NextMessage waits for the next message the bot sent to the chat that the test has not seen yet.
 func (t *Telegram) NextMessage(token string, chatID int64, timeout time.Duration) (SentMessage, error) {
 	deadline := time.After(timeout)
 	for {
@@ -218,7 +203,6 @@ func (t *Telegram) NextMessage(token string, chatID int64, timeout time.Duration
 	}
 }
 
-// Sent returns everything the bot has sent to the chat so far, in order.
 func (t *Telegram) Sent(token string, chatID int64) []SentMessage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -233,7 +217,6 @@ func (t *Telegram) Sent(token string, chatID int64) []SentMessage {
 	return out
 }
 
-// Message returns the current state of a sent message, including later edits.
 func (t *Telegram) Message(token string, messageID int64) SentMessage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -245,21 +228,18 @@ func (t *Telegram) Message(token string, messageID int64) SentMessage {
 	return SentMessage{}
 }
 
-// Toasts returns the callback answers the bot gave so far.
 func (t *Telegram) Toasts(token string) []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return append([]string(nil), t.bots[token].toasts...)
 }
 
-// Pending returns how many updates of the bot the runner has not confirmed yet by asking for the next ones.
 func (t *Telegram) Pending(token string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return len(t.bots[token].updates)
 }
 
-// Description returns the bot profile texts the bot has set.
 func (t *Telegram) Description(token string) (description, short string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -267,7 +247,6 @@ func (t *Telegram) Description(token string) (description, short string) {
 	return b.description, b.shortDescription
 }
 
-// Polling returns how many getUpdates calls for the bot are in flight right now.
 func (t *Telegram) Polling(token string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -354,8 +333,6 @@ func (t *Telegram) serve(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": result})
 }
 
-// getUpdates long-polls like the real API: it confirms updates before offset and waits for new ones up to the timeout.
-// It returns nil if the bot disappears while waiting.
 func (t *Telegram) getUpdates(ctx context.Context, token string, params map[string]json.RawMessage) any {
 	var offset int64
 	var timeoutSec int

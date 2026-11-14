@@ -13,17 +13,15 @@ import (
 type BotStatus string
 
 const (
-	// BotPending: the token is saved, the runner has not picked the bot up yet.
 	BotPending BotStatus = "pending"
 	BotRunning BotStatus = "running"
 	BotError   BotStatus = "error"
 )
 
-// Reasons the runner reports with BotError.
 const (
-	BotErrUnauthorized = "unauthorized" // Telegram no longer accepts the token
-	BotErrConflict     = "conflict"     // something else is polling the same bot
-	BotErrUnavailable  = "unavailable"  // Telegram API is unreachable
+	BotErrUnauthorized = "unauthorized"
+	BotErrConflict     = "conflict"
+	BotErrUnavailable  = "unavailable"
 )
 
 type Bot struct {
@@ -34,10 +32,9 @@ type Bot struct {
 	Status        BotStatus
 	StatusError   string
 	StatusAt      time.Time
-	// LinkCode is the one-time secret of the deep link that subscribes a master to new-request notifications.
-	LinkCode  string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	LinkCode      string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 const masterLinkPrefix = "master_"
@@ -46,7 +43,6 @@ func (b Bot) Link() string { return "https://t.me/" + b.Username }
 
 func (b Bot) MasterLink() string { return b.Link() + "?start=" + masterLinkPrefix + b.LinkCode }
 
-// MasterLinkCode extracts the code from a /start payload, if the payload is a master link.
 func MasterLinkCode(payload string) (string, bool) {
 	return strings.CutPrefix(payload, masterLinkPrefix)
 }
@@ -57,7 +53,6 @@ func NewLinkCode() string {
 	return hex.EncodeToString(b)
 }
 
-// NotifyRecipient is a Telegram chat that receives a message about every new request.
 type NotifyRecipient struct {
 	AutoserviceID uuid.UUID
 	ChatID        int64

@@ -147,6 +147,39 @@ func register(a *api, email string) string {
 	return r.body["access_token"].(string)
 }
 
+func TestRegistrationRollsBackOnAutoserviceOrCatalogFailure(t *testing.T) {
+	for _, table := range []string{"autoservices", "services"} {
+		t.Run(table, func(t *testing.T) {
+			a := setup(t)
+			ctx := context.Background()
+			_, err := a.pool.Exec(ctx, `CREATE FUNCTION fail_registration() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'write failed'; END $$;
+				CREATE TRIGGER fail_registration BEFORE INSERT ON `+table+` FOR EACH ROW EXECUTE FUNCTION fail_registration()`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := map[string]string{"email": "retry@example.com", "password": "password123", "full_name": "Owner", "autoservice_name": "Garage"}
+			expect(t, a.do("POST", "/api/v1/auth/register", "", input), 500, "failed registration")
+			var employees, autoservices, services int
+			if err := a.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM employees), (SELECT count(*) FROM autoservices), (SELECT count(*) FROM services)`).Scan(&employees, &autoservices, &services); err != nil {
+				t.Fatal(err)
+			}
+			if employees != 0 || autoservices != 0 || services != 0 {
+				t.Fatalf("partial registration: %d employees, %d autoservices, %d services", employees, autoservices, services)
+			}
+			if _, err := a.pool.Exec(ctx, `DROP TRIGGER fail_registration ON `+table); err != nil {
+				t.Fatal(err)
+			}
+			r := a.do("POST", "/api/v1/auth/register", "", input)
+			expect(t, r, 201, "retry registration")
+			token := r.body["access_token"].(string)
+			if got := len(items(a.do("GET", "/api/v1/services", token, nil))); got != len(domain.DefaultServices()) {
+				t.Fatalf("starter catalog has %d services", got)
+			}
+			expect(t, a.do("POST", "/api/v1/auth/register", "", input), 409, "duplicate email")
+		})
+	}
+}
+
 func TestEmployeeAccountFlow(t *testing.T) {
 	a := setup(t)
 
@@ -364,7 +397,6 @@ func TestAutoserviceBotAndRequestsFlow(t *testing.T) {
 	for i := range 5 {
 		expect(t, newReq("222222", 500, "Kia"), 201, fmt.Sprintf("request %d of the day", i+1))
 	}
-	// Cancelling a request does not give the client another one: the limit counts every status.
 	lastOfDay := a.runner("GET", "/bots/222222/clients/500/requests", nil).body["items"].([]any)[0].(map[string]any)["id"].(string)
 	expect(t, a.runner("POST", "/bots/222222/clients/500/requests/"+lastOfDay+"/cancel", nil), 200, "client cancels one")
 	r = newReq("222222", 500, "Kia")
@@ -410,7 +442,6 @@ func names(list []map[string]any) string {
 func TestServiceCatalogFlow(t *testing.T) {
 	a := setup(t)
 
-	// Registration with an autoservice name creates the autoservice and its starter catalog in one step.
 	r := a.do("POST", "/api/v1/auth/register", "", map[string]string{
 		"email": "owner@example.com", "password": "password123", "full_name": "Иван", "autoservice_name": "Гараж №1"})
 	expect(t, r, 201, "register with autoservice")
@@ -463,7 +494,6 @@ func TestServiceCatalogFlow(t *testing.T) {
 	}
 	choiceID := fields[0].(map[string]any)["id"]
 
-	// Updating keeps the IDs of existing fields, so half-filled bot dialogs stay valid.
 	r = a.do("PUT", "/api/v1/services/"+washID, tok, map[string]any{
 		"name": "Мойка", "is_active": false,
 		"fields": []map[string]any{
@@ -547,7 +577,6 @@ func TestResetPasswordCommand(t *testing.T) {
 	}
 }
 
-// scrape returns the value of one series from GET /metrics, or -1 if the series is not there.
 func scrape(a *api, series string) float64 {
 	a.t.Helper()
 	res, err := http.Get(a.srv.URL + "/metrics")
@@ -575,7 +604,6 @@ func TestMetricsShowProductState(t *testing.T) {
 		}
 	}
 
-	// Two autoservices are registered, one connected a bot and got requests.
 	tok := register(a, "owner@example.com")
 	expect(t, a.do("POST", "/api/v1/autoservice", tok, map[string]string{"name": "Гараж"}), 201, "create autoservice")
 	expect(t, a.do("POST", "/api/v1/autoservice", register(a, "idle@example.com"), map[string]string{"name": "Пустой"}), 201, "second autoservice")
@@ -606,7 +634,6 @@ func TestMetricsShowProductState(t *testing.T) {
 	expectSeries(`requests_by_status{status="in_progress"}`, 1)
 	expectSeries(`requests_by_status{status="closed"}`, 0)
 	expectSeries(`requests_overdue`, 1)
-	// The first reaction of the master is measured once per request; counters are process-wide, hence the deltas.
 	expectSeries(`request_status_changes_total{to="in_progress"}`, max(taking, 0)+1)
 	expectSeries("request_reaction_seconds_count", max(reactions, 0)+1)
 }

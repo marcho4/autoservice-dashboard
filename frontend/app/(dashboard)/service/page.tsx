@@ -93,7 +93,6 @@ export default function ServicePage() {
 
         {service && <BotCard key={service.id} serviceName={service.name} />}
 
-        {/* Away from "Сохранить": deleting everything is not the neighbour of an everyday action. */}
         {service && (
           <Card title="Удаление автосервиса">
             <p className="mb-4 max-w-[65ch] text-ink-2">

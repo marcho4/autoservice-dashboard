@@ -11,7 +11,6 @@ const NEW = "new";
 export default function ServicesPage() {
   const [services, setServices] = useState<Service[] | null>(null);
   const [error, setError] = useState<unknown>(null);
-  // ID of the service being edited, NEW for the "add service" form.
   const [editing, setEditing] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -22,7 +21,6 @@ export default function ServicesPage() {
       .catch(setError);
   }, []);
 
-  // Runs a catalog change and reports a failure as text, which the editor shows next to its buttons.
   async function change(call: () => Promise<Service[]>): Promise<string | null> {
     try {
       setServices(await call());
@@ -65,7 +63,6 @@ export default function ServicesPage() {
 
   const toggle = (s: Service) =>
     quick(async () => {
-      // Only the editable fields: the backend rejects a body with id and timestamps as invalid JSON.
       const input: ServiceInput = { name: s.name, description: s.description, is_active: !s.is_active, fields: s.fields };
       const updated = await api.put<Service>(`services/${s.id}`, input);
       return list.map((x) => (x.id === updated.id ? updated : x));

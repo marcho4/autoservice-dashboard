@@ -12,8 +12,6 @@ import (
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 )
 
-// BotRunnerService is everything a bot may do on behalf of a Telegram client of one autoservice.
-// The built-in Telegram bot calls it directly; the optional internal HTTP API exposes the same operations to external integrations.
 type BotRunnerService struct {
 	bots         BotRepository
 	autoservices AutoserviceRepository
@@ -30,7 +28,6 @@ func (s *BotRunnerService) ListBots(ctx context.Context) ([]domain.Bot, error) {
 	return s.bots.List(ctx)
 }
 
-// ResolveBot maps a Telegram bot ID to the autoservice the bot is connected to.
 func (s *BotRunnerService) ResolveBot(ctx context.Context, telegramBotID int64) (uuid.UUID, error) {
 	bot, err := s.bots.GetByTelegramID(ctx, telegramBotID)
 	return bot.AutoserviceID, err
@@ -68,7 +65,6 @@ func (s *BotRunnerService) CreateRequest(ctx context.Context, autoserviceID uuid
 	if id == uuid.Nil {
 		id = uuid.New()
 	} else {
-		// A repeated submit of the same draft (e.g. the dialog state was not saved after the first one) is not a new request.
 		existing, err := s.requests.Get(ctx, autoserviceID, id)
 		switch {
 		case err == nil && existing.ClientID == client.ID:
@@ -159,7 +155,6 @@ func (s *BotRunnerService) CancelClientRequest(ctx context.Context, autoserviceI
 	return cancelled, err
 }
 
-// LinkRecipient subscribes a Telegram chat to new-request notifications if the code from the deep link is the current one.
 func (s *BotRunnerService) LinkRecipient(ctx context.Context, autoserviceID uuid.UUID, code string, chatID int64, name string) error {
 	if code == "" {
 		return domain.ErrNotFound
@@ -171,7 +166,6 @@ func (s *BotRunnerService) Recipients(ctx context.Context, autoserviceID uuid.UU
 	return s.bots.ListRecipients(ctx, autoserviceID)
 }
 
-// RemoveRecipient drops a chat that can no longer be reached, e.g. the master blocked the bot.
 func (s *BotRunnerService) RemoveRecipient(ctx context.Context, autoserviceID uuid.UUID, chatID int64) error {
 	return s.bots.RemoveRecipient(ctx, autoserviceID, chatID)
 }

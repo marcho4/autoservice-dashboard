@@ -15,7 +15,6 @@ import (
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 )
 
-// memBackend is an in-memory application behind the bot.
 type memBackend struct {
 	autoservice domain.Autoservice
 	services    []domain.Service
@@ -144,7 +143,6 @@ const (
 	masterChat = int64(7)
 )
 
-// dialog drives the engine as one Telegram user and keeps the last reply for assertions.
 type dialog struct {
 	t       *testing.T
 	engine  *Engine
@@ -186,7 +184,21 @@ func (d *dialog) send(in Incoming) *dialog {
 
 func (d *dialog) text(s string) *dialog { d.t.Helper(); return d.send(Incoming{Text: s}) }
 
-// click presses the inline button with the given label on the last bot message.
+func TestRedeliveredUpdateDoesNotOverwriteLaterAnswers(t *testing.T) {
+	d := newDialog(t, nil)
+	d.send(Incoming{BotID: 11, UpdateID: 1, Text: "/start"})
+	d.send(Incoming{BotID: 11, UpdateID: 2, Text: "нужен ремонт"})
+	button := d.callbackData("Замена масла")
+	d.send(Incoming{BotID: 11, UpdateID: 3, Callback: button})
+	d.send(Incoming{BotID: 11, UpdateID: 4, Text: "Toyota Camry"})
+	d.send(Incoming{BotID: 11, UpdateID: 1, Text: "/start"})
+	if len(d.last.Messages) != 0 {
+		t.Fatal("a redelivered update must not restart the dialog")
+	}
+	d.send(Incoming{BotID: 11, UpdateID: 5, Text: "120000"}).expect("Когда")
+	d.send(Incoming{BotID: 22, UpdateID: 1, Text: "/start"}).expect("Здравствуйте! Чем могу помочь?")
+}
+
 func (d *dialog) click(label string) *dialog {
 	d.t.Helper()
 	for _, m := range d.last.Messages {
@@ -202,7 +214,6 @@ func (d *dialog) click(label string) *dialog {
 	return d
 }
 
-// replies returns the texts sent to the client's own chat.
 func (d *dialog) replies() string {
 	var texts []string
 	for _, m := range d.last.Messages {
@@ -258,7 +269,6 @@ func TestFreeFormRequestIsPrefilledByLLM(t *testing.T) {
 	d.backend.recipients = []domain.NotifyRecipient{{ChatID: masterChat, Name: "Мастер"}}
 
 	d.text("/start").expect("Здравствуйте! Чем могу помочь?")
-	// The car is already known from the message, so the bot goes straight to the first missing field.
 	d.text("Хочу поменять масло на камри 2015 года").expect("Оформляю заявку: <b>Замена масла</b>", "Какой пробег?")
 	d.text("сто двадцать тысяч").expect("нужно число", "Какой пробег?")
 	d.text("120 000").expect("Когда вам удобно приехать?").expectButtons("Пропустить")
@@ -293,7 +303,6 @@ func TestFreeFormRequestIsPrefilledByLLM(t *testing.T) {
 		t.Errorf("unexpected request: %+v", r)
 	}
 
-	// The master gets the whole request with a link to the CRM.
 	var notice *Outgoing
 	for i, m := range d.last.Messages {
 		if m.ChatID == masterChat {
@@ -312,7 +321,6 @@ func TestFreeFormRequestIsPrefilledByLLM(t *testing.T) {
 		t.Errorf("notification must link to the request: %+v", notice.Buttons)
 	}
 
-	// The dialog is over: a late press on the old button does nothing.
 	d.send(Incoming{Callback: cbConfirm})
 	if d.last.Toast != staleButton || len(d.backend.requests) != 1 {
 		t.Errorf("stale confirm must be ignored: %+v", d.last)
@@ -323,7 +331,6 @@ func TestUnknownIntentFallsBackToServiceButtons(t *testing.T) {
 	d := newDialog(t, func(ExtractInput) (Extraction, error) { return Extraction{}, nil })
 
 	d.text("посмотрите машину").expect("какая услуга вам нужна").expectButtons("Замена масла", "Шиномонтаж")
-	// The client may also describe the task again instead of pressing a button.
 	d.text("ну мне бы машину посмотреть").expectButtons("Замена масла", "Шиномонтаж")
 	if d.llm != 2 {
 		t.Errorf("each free-form message before the service is known goes to the LLM, got %d calls", d.llm)
@@ -362,7 +369,6 @@ func TestLLMOutputIsValidated(t *testing.T) {
 			Phone:     "not a phone",
 		}, nil
 	})
-	// A non-numeric mileage, an unknown field and a bad phone are dropped, so the bot asks for them itself.
 	d.text("масло на бмв х5").expect("Какой пробег?")
 	d.text("90000").click("Пропустить").expect("Оставьте номер телефона")
 	d.text("+7 900 111 22 33").expect("Автомобиль: BMW X5", "Пробег: 90000")
@@ -372,11 +378,9 @@ func TestPhoneFromMessageAndKnownClient(t *testing.T) {
 	d := newDialog(t, func(ExtractInput) (Extraction, error) {
 		return Extraction{ServiceID: tireService.ID, Values: map[string]string{"work": "смена шин"}, Phone: "8 (900) 111-22-33"}, nil
 	})
-	// Everything is in the first message: the bot only asks to confirm.
 	d.text("переобуться, мой номер 8 (900) 111-22-33").expect("Проверьте заявку", "Вид работ: Смена шин", "+7 900 111-22-33")
 	d.click("✅ Отправить").expect("Заявка №1 принята")
 
-	// Next time the saved phone is offered as a one-tap answer.
 	d.engine.extractor = extractorFunc(func(ExtractInput) (Extraction, error) {
 		return Extraction{ServiceID: tireService.ID, Values: map[string]string{"work": "Балансировка"}}, nil
 	})
@@ -405,7 +409,6 @@ func TestEditBeforeSubmit(t *testing.T) {
 	d.click("✏️ Изменить").click("Телефон").expect("Оставьте номер телефона")
 	d.text("+7 911 000-00-00").expect("Телефон: +7 911 000-00-00")
 
-	// Changing the service starts its form from scratch but keeps the phone.
 	d.click("✏️ Изменить").click("Услугу").expectButtons("Замена масла", "Шиномонтаж")
 	d.click("Шиномонтаж").expect("Что нужно сделать?")
 	d.click("Смена шин").expect("Услуга: <b>Шиномонтаж</b>", "Телефон: +7 911 000-00-00")
@@ -530,7 +533,6 @@ func TestLongestFormFitsTelegramMessage(t *testing.T) {
 			t.Errorf("message of %d characters does not fit into Telegram", n)
 		}
 	}
-	// Nothing is lost: the CRM gets the answers in full.
 	if got := len([]rune(d.backend.requests[0].Answers[0].Value)); got != domain.MaxAnswerLength {
 		t.Errorf("stored answer has %d characters, want %d", got, domain.MaxAnswerLength)
 	}
@@ -568,7 +570,6 @@ func TestButtonsOfEarlierQuestionsAndDraftsAreStale(t *testing.T) {
 	}
 }
 
-// callbackData returns the data of the inline button with the given label on the last bot message.
 func (d *dialog) callbackData(label string) string {
 	for _, m := range d.last.Messages {
 		for _, row := range m.Buttons {
@@ -586,7 +587,6 @@ func TestClientCanLeaveAWrongService(t *testing.T) {
 	d := newDialog(t, func(ExtractInput) (Extraction, error) { return Extraction{ServiceID: oilService.ID}, nil })
 	d.text("что-то стучит").expect("Оформляю заявку: <b>Замена масла</b>").expectButtons("Другая услуга")
 	d.click("Другая услуга").expectButtons("Замена масла", "Шиномонтаж")
-	// A service the client picked by hand needs no way out.
 	d.click("Шиномонтаж").expect("Что нужно сделать?").expectButtons("Смена шин", "Балансировка")
 	d.text("Передумал!").expect("заявку не отправляю")
 	if len(d.backend.requests) != 0 {
@@ -637,7 +637,6 @@ func TestDailyRequestLimitKeepsTheDraft(t *testing.T) {
 	summary := d.text("переобуться").last
 	d.click("✅ Отправить").expect("Вы уже оставили 5 заявок за сутки. Мастер свяжется с вами по ним; новую можно будет отправить позже.")
 
-	// A day later the client sends the same draft with the same button.
 	for i := range d.backend.requests {
 		d.backend.requests[i].CreatedAt = time.Now().Add(-25 * time.Hour)
 	}
@@ -648,7 +647,6 @@ func TestDailyRequestLimitKeepsTheDraft(t *testing.T) {
 func TestLLMBudgetPerAutoservice(t *testing.T) {
 	d := newDialog(t, func(ExtractInput) (Extraction, error) { return Extraction{}, nil })
 	for i := range llmCallsPerAutoservice + 1 {
-		// Every message comes from a new chat, so the per-chat budget never runs out.
 		d.from.TelegramID = int64(1000 + i)
 		d.text("ерунда какая-то").expectButtons("Замена масла", "Шиномонтаж")
 	}
@@ -665,7 +663,6 @@ func TestUnsupportedMessageRepeatsTheQuestion(t *testing.T) {
 	d.send(Incoming{}).expect("Голосовые и фото я пока не принимаю", "Оставьте номер телефона").expectButtons("📱 Отправить мой номер")
 }
 
-// counters reads the product counters; they are process-wide, so tests compare them before and after.
 func counters(names ...string) []uint64 {
 	values := make([]uint64, len(names))
 	for i, name := range names {
@@ -694,23 +691,20 @@ func TestDialogFunnelIsCounted(t *testing.T) {
 		}
 		return Extraction{ServiceID: oilService.ID, Values: map[string]string{"car": "Kia Rio"}}, nil
 	})
-	// First client: the LLM picks the wrong service, the client switches and cancels.
 	d.text("что-то стучит").click("Другая услуга").click("Шиномонтаж").text("отмена")
-	// Nothing to cancel any more: a second /cancel is not a second cancelled draft.
 	d.text("/cancel")
-	// Second client: the LLM does not understand, the client picks the service and goes to the end.
 	recognize = false
 	d.text("мне бы колёса").click("Шиномонтаж").click("Смена шин").text("+79001112233").click("✅ Отправить").expect("принята")
 
 	want := []uint64{
-		1, // recognized: "что-то стучит"
-		1, // unknown: "мне бы колёса"
-		2, // started: switching the service is not a new draft
-		1, // wrong_service
-		1, // cancelled
-		1, // submitted
-		1, // llm filled the car
-		1, // the client answered "Смена шин"; the phone is not a form field
+		1,
+		1,
+		2,
+		1,
+		1,
+		1,
+		1,
+		1,
 	}
 	after := counters(names...)
 	for i, name := range names {

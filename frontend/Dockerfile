@@ -20,5 +20,4 @@ COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 USER node
 EXPOSE 3000
-# BACKEND_URL and COOKIE_SECURE are read at runtime, so the same image runs in every environment.
 CMD ["node", "server.js"]

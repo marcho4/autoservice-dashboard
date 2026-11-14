@@ -30,7 +30,6 @@ export default function ClientsPage() {
       {!data && error === null && <Loading />}
       {data && data.items.length === 0 && <Empty title="Клиентов пока нет">Они появятся с первой заявкой через бота.</Empty>}
 
-      {/* Phone: a card per client, the number is a button. */}
       {data && data.items.length > 0 && (
         <ul className={`sm:hidden ${listClass}`}>
           {data.items.map((c) => (

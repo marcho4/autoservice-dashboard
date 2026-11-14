@@ -1,4 +1,3 @@
-// Package telegram is a minimal Telegram Bot API client: just the methods the dashboard and the bot runner need.
 package telegram
 
 import (
@@ -21,8 +20,7 @@ import (
 type Client struct {
 	baseURL string
 	http    *http.Client
-	// poll has no client-side timeout: getUpdates is bounded by its own long-poll timeout and the request context.
-	poll *http.Client
+	poll    *http.Client
 }
 
 func New(baseURL string) *Client {
@@ -33,7 +31,6 @@ func New(baseURL string) *Client {
 	}
 }
 
-// APIError is a non-ok answer of the Bot API.
 type APIError struct {
 	Code        int
 	Description string
@@ -44,7 +41,6 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("telegram: %d %s", e.Code, e.Description)
 }
 
-// ErrorCode returns the Bot API error code of err, or 0 for network and other errors.
 func ErrorCode(err error) int {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
@@ -63,8 +59,6 @@ type apiResponse struct {
 	} `json:"parameters"`
 }
 
-// call makes one Bot API request. A short flood-control pause (429) is waited out once, so a reply to a client
-// or a master notification is not lost; getUpdates is left to its own retry loop.
 func (c *Client) call(ctx context.Context, hc *http.Client, token, method string, payload, result any) error {
 	err := c.do(ctx, hc, token, method, payload, result)
 	var apiErr *APIError
@@ -124,7 +118,6 @@ func (c *Client) do(ctx context.Context, hc *http.Client, token, method string, 
 	return nil
 }
 
-// GetMe checks a bot token. It is the only call made on behalf of an employee, so it keeps its own counters.
 func (c *Client) GetMe(ctx context.Context, token string) (usecases.TelegramBotInfo, error) {
 	var me User
 	err := c.call(ctx, c.http, token, "getMe", nil, &me)
@@ -191,7 +184,6 @@ type Update struct {
 	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
-// GetUpdates long-polls for updates after offset. Calling it confirms every update before offset.
 func (c *Client) GetUpdates(ctx context.Context, token string, offset int64, timeout time.Duration) ([]Update, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout+15*time.Second)
 	defer cancel()
@@ -215,7 +207,6 @@ type KeyboardButton struct {
 	RequestContact bool   `json:"request_contact,omitempty"`
 }
 
-// OutMessage is a text message in HTML parse mode with at most one kind of keyboard.
 type OutMessage struct {
 	ChatID         int64
 	Text           string
@@ -246,7 +237,6 @@ func (c *Client) AnswerCallbackQuery(ctx context.Context, token, id, text string
 	return c.call(ctx, c.http, token, "answerCallbackQuery", map[string]any{"callback_query_id": id, "text": text}, nil)
 }
 
-// EditMessageText replaces the text of a bot message and drops its inline keyboard.
 func (c *Client) EditMessageText(ctx context.Context, token string, chatID, messageID int64, text string) error {
 	return c.call(ctx, c.http, token, "editMessageText", map[string]any{
 		"chat_id": chatID, "message_id": messageID, "text": text, "parse_mode": "HTML",
@@ -269,7 +259,6 @@ type BotCommand struct {
 	Description string `json:"description"`
 }
 
-// Setup prepares a bot for long polling: getUpdates does not work while a webhook is set.
 func (c *Client) Setup(ctx context.Context, token string, commands []BotCommand) error {
 	if err := c.call(ctx, c.http, token, "deleteWebhook", nil, nil); err != nil {
 		return err
@@ -277,7 +266,6 @@ func (c *Client) Setup(ctx context.Context, token string, commands []BotCommand)
 	return c.call(ctx, c.http, token, "setMyCommands", map[string]any{"commands": commands}, nil)
 }
 
-// SetDescription sets the texts a user sees in the bot profile and on the empty chat screen.
 func (c *Client) SetDescription(ctx context.Context, token, description, shortDescription string) error {
 	if err := c.call(ctx, c.http, token, "setMyDescription", map[string]any{"description": description}, nil); err != nil {
 		return err
@@ -285,7 +273,6 @@ func (c *Client) SetDescription(ctx context.Context, token, description, shortDe
 	return c.call(ctx, c.http, token, "setMyShortDescription", map[string]any{"short_description": shortDescription}, nil)
 }
 
-// withoutToken strips the request URL from transport errors: it contains the bot token.
 func withoutToken(err error) error {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {

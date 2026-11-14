@@ -12,8 +12,6 @@ import (
 	"github.com/marcho4/autoservice-dashboard/backend/internal/domain"
 )
 
-// WriteStats appends to a metrics scrape the gauges that only the database knows: how far autoservices got
-// in onboarding, what the bots report and how many requests wait for a master. Counters cannot show a current state.
 func WriteStats(ctx context.Context, db *pgxpool.Pool, w io.Writer) error {
 	var registered, withBot, withNotifications, withRequests, overdue uint64
 	err := db.QueryRow(ctx, `SELECT
@@ -26,14 +24,12 @@ func WriteStats(ctx context.Context, db *pgxpool.Pool, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// The onboarding funnel: each stage is a subset of the one before, except notifications, which are optional.
 	metrics.WriteGaugeUint64(w, `autoservices{stage="registered"}`, registered)
 	metrics.WriteGaugeUint64(w, `autoservices{stage="bot_connected"}`, withBot)
 	metrics.WriteGaugeUint64(w, `autoservices{stage="notifications_on"}`, withNotifications)
 	metrics.WriteGaugeUint64(w, `autoservices{stage="has_requests"}`, withRequests)
 	metrics.WriteGaugeUint64(w, "requests_overdue", overdue)
 
-	// Every status is written, zero included, so that a dashboard or an alert never meets a missing series.
 	byStatus := map[domain.RequestStatus]uint64{
 		domain.StatusNew: 0, domain.StatusInProgress: 0, domain.StatusClosed: 0, domain.StatusRejected: 0, domain.StatusCancelled: 0,
 	}

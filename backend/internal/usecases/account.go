@@ -58,8 +58,6 @@ func (s *AccountService) ChangePassword(ctx context.Context, current domain.Empl
 	return s.auth.newSession(emp)
 }
 
-// ResetPassword gives the employee a new random password and signs out all their sessions.
-// It is the way back into a forgotten account, run by the operator from the server.
 func (s *AccountService) ResetPassword(ctx context.Context, email string) (string, error) {
 	email, err := domain.NormalizeEmail(email)
 	if err != nil {

@@ -22,20 +22,15 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	LogLevel        slog.Level
 
-	// BotAPIKey enables the internal HTTP API for external bot runners; empty keeps it off.
 	BotAPIKey string
-	// BotRunner starts the built-in Telegram bot runner inside the serve command.
 	BotRunner bool
-	// AppURL is the public address of the dashboard, used for links in Telegram notifications.
-	AppURL string
+	AppURL    string
 
-	// The LLM is any OpenAI-compatible API. An empty LLMModel turns it off: clients then pick the service with buttons.
 	LLMBaseURL string
 	LLMAPIKey  string
 	LLMModel   string
 	LLMTimeout time.Duration
 
-	// Runner overrides the bot runner timings; the zero value means production defaults.
 	Runner bot.RunnerConfig
 
 	ProbeTargets  map[string]string
@@ -73,7 +68,6 @@ func Load() (Config, error) {
 	return c, errors.Join(errs...)
 }
 
-// LoadBot reads the configuration of the standalone bot runner (the "bot" command).
 func LoadBot() (Config, error) {
 	var errs []error
 	c := Config{
@@ -161,7 +155,6 @@ func durationVar(name string, def time.Duration, errs *[]error) time.Duration {
 	return d
 }
 
-// Формат "backend=http://backend:8080/readyz,frontend=http://frontend:3000/healthz".
 func targetsVar(name string, errs *[]error) map[string]string {
 	targets := map[string]string{}
 	for item := range strings.SplitSeq(required(name, errs), ",") {

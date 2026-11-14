@@ -6,7 +6,7 @@ import { Alert, Button, Field, Icon, IconButton, Select, TextArea } from "@/comp
 import { FieldType, Service, ServiceInput } from "@/lib/api";
 
 type DraftField = {
-  key: string; // stable React key; the saved field ID once the field exists on the server
+  key: string;
   id: string;
   label: string;
   question: string;
@@ -37,7 +37,6 @@ function toDraft(service: Service | null): DraftField[] {
   return (service?.fields ?? []).map((f) => ({ ...f, key: f.id, optionsText: f.options.join("\n") }));
 }
 
-// Editor of one service and its form: the questions the bot asks a client who needs this service.
 export default function ServiceEditor({
   service,
   onSave,
@@ -139,7 +138,6 @@ export default function ServiceEditor({
                   <IconButton label="Ниже" disabled={i === fields.length - 1} onClick={() => move(i, 1)}>
                     <Icon name="down" />
                   </IconButton>
-                  {/* Kept apart from the arrows: a miss must not delete the question. */}
                   <IconButton label="Удалить вопрос" className="ml-3" onClick={() => setFields((list) => list.filter((x) => x.key !== f.key))}>
                     <Icon name="close" />
                   </IconButton>

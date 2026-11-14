@@ -22,24 +22,28 @@ func scanAutoservice(row pgx.Row) (domain.Autoservice, error) {
 	return a, notFound(err)
 }
 
-// Create inserts the autoservice together with its starter services in one transaction.
 func (r *AutoserviceRepo) Create(ctx context.Context, a domain.Autoservice, services []domain.ServiceInput) (domain.Autoservice, error) {
 	var out domain.Autoservice
 	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
 		var err error
-		out, err = scanAutoservice(tx.QueryRow(ctx,
-			`INSERT INTO autoservices (owner_id, name, address, phone, description)
-			 VALUES ($1, $2, $3, $4, $5) RETURNING `+autoserviceColumns,
-			a.OwnerID, a.Name, a.Address, a.Phone, a.Description))
-		if err != nil {
-			return err
-		}
-		return insertServices(ctx, tx, out.ID, services)
+		out, err = createAutoservice(ctx, tx, a, services)
+		return err
 	})
 	if uniqueConstraint(err) == "autoservices_owner_id_key" {
 		return domain.Autoservice{}, domain.ErrAutoserviceExists
 	}
 	return out, err
+}
+
+func createAutoservice(ctx context.Context, tx pgx.Tx, a domain.Autoservice, services []domain.ServiceInput) (domain.Autoservice, error) {
+	out, err := scanAutoservice(tx.QueryRow(ctx,
+		`INSERT INTO autoservices (owner_id, name, address, phone, description)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING `+autoserviceColumns,
+		a.OwnerID, a.Name, a.Address, a.Phone, a.Description))
+	if err != nil {
+		return domain.Autoservice{}, err
+	}
+	return out, insertServices(ctx, tx, out.ID, services)
 }
 
 func (r *AutoserviceRepo) Get(ctx context.Context, id uuid.UUID) (domain.Autoservice, error) {
@@ -74,11 +78,17 @@ func scanBot(row pgx.Row) (domain.Bot, error) {
 	return b, notFound(err)
 }
 
-// Upsert connects a bot or replaces its token. The runner status is reset to pending;
-// when a different Telegram bot is connected, masters have to subscribe again because they never started the new bot.
 func (r *BotRepo) Upsert(ctx context.Context, b domain.Bot) (domain.Bot, error) {
 	var out domain.Bot
 	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM bots WHERE autoservice_id = $1 FOR UPDATE`, b.AutoserviceID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM bot_updates WHERE autoservice_id = $1 AND telegram_bot_id <> $2`,
+			b.AutoserviceID, b.TelegramBotID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx,
 			`DELETE FROM notify_recipients n USING bots b
 			 WHERE n.autoservice_id = $1 AND b.autoservice_id = n.autoservice_id AND b.telegram_bot_id <> $2`,
@@ -127,7 +137,6 @@ func (r *BotRepo) Delete(ctx context.Context, autoserviceID uuid.UUID) error {
 	return affectedOrNotFound(r.db.Exec(ctx, `DELETE FROM bots WHERE autoservice_id = $1`, autoserviceID))
 }
 
-// SetStatus records what the runner sees. The token guard keeps a stale poller from overwriting the status of a replaced token.
 func (r *BotRepo) SetStatus(ctx context.Context, autoserviceID uuid.UUID, token string, status domain.BotStatus, reason string) error {
 	_, err := r.db.Exec(ctx,
 		`UPDATE bots SET status = $3, status_error = $4, status_at = now()
@@ -136,7 +145,6 @@ func (r *BotRepo) SetStatus(ctx context.Context, autoserviceID uuid.UUID, token 
 	return err
 }
 
-// AddRecipient subscribes a chat if the code matches the current link code, and rotates the code so the link works once.
 func (r *BotRepo) AddRecipient(ctx context.Context, autoserviceID uuid.UUID, code, newCode string, chatID int64, name string) error {
 	return pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
 		if err := affectedOrNotFound(tx.Exec(ctx,

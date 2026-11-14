@@ -13,7 +13,6 @@ export default function RequestPage() {
   const { id } = useParams<{ id: string }>();
   const [req, setReq] = useState<RequestWithClient | null>(null);
   const [error, setError] = useState("");
-  // The action in flight: its button says what is happening, the rest wait.
   const [busy, setBusy] = useState<Action | "">("");
   const [note, setNote] = useState<string | null>(null);
   const [noteSaved, setNoteSaved] = useState(false);
@@ -39,8 +38,9 @@ export default function RequestPage() {
   const act = (action: "take" | "reject" | "close") => run(action, () => api.post<RequestWithClient>(`requests/${id}/${action}`));
 
   async function saveNote() {
-    if (await run("note", () => api.put<RequestWithClient>(`requests/${id}/note`, { note }))) {
-      setNote(null);
+    const submittedNote = note;
+    if (await run("note", () => api.put<RequestWithClient>(`requests/${id}/note`, { note: submittedNote }))) {
+      setNote((current) => (current === submittedNote ? null : current));
       setNoteSaved(true);
     }
   }
@@ -74,7 +74,6 @@ export default function RequestPage() {
       )}
 
       <div className="grid items-start gap-4 lg:grid-cols-3 lg:gap-6">
-        {/* First in the markup, so on a phone the call and the actions sit right under the title. */}
         <Card className="lg:sticky lg:top-6 lg:col-start-3 lg:row-start-1">
           <h2 className="text-heading">{clientName(c)}</h2>
           <CallButton large phone={req.phone} name={clientName(c)} className="mt-3 w-full justify-start" />
@@ -149,7 +148,7 @@ export default function RequestPage() {
                 {busy === "note" ? "Сохраняем…" : "Сохранить заметку"}
               </Button>
               <span role="status" className="font-medium text-ok">
-                {noteSaved && "Заметка сохранена"}
+                {noteSaved && note === null && "Заметка сохранена"}
               </span>
             </div>
           </Card>

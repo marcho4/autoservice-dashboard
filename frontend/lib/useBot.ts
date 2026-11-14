@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, Bot } from "@/lib/api";
 
-// Keeps the connected bot fresh: its runner status and notification recipients change outside of the page.
-// bot is undefined while loading and null when no bot is connected.
 export function useBot(intervalMs = 5000) {
   const [bot, setBot] = useState<Bot | null | undefined>(undefined);
   const [error, setError] = useState<unknown>(null);

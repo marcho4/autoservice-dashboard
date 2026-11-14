@@ -6,8 +6,6 @@ import { FormEvent, useState } from "react";
 import { Alert, Button, Field, linkClass, Logo } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
 
-// Where to go after login: the page the guest asked for (?next=, set by proxy.ts), but only inside this site.
-// A path must start with a single "/"; "//host", "/\host" and absolute URLs would be an open redirect.
 function nextPath(): string {
   const next = new URLSearchParams(window.location.search).get("next") ?? "";
   if (!/^\/(?![/\\])/.test(next)) return "/requests";

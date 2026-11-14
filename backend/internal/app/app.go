@@ -37,7 +37,7 @@ func NewRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) (http.Ha
 	requests := postgres.NewRequestRepo(pool)
 
 	autoservices := usecases.NewAutoserviceService(postgres.NewAutoserviceRepo(pool), postgres.NewBotRepo(pool), telegram.New(cfg.TelegramAPIURL))
-	auth := usecases.NewAuthService(employees, postgres.NewRevokedTokenRepo(pool), hasher, tokens, autoservices)
+	auth := usecases.NewAuthService(employees, postgres.NewRevokedTokenRepo(pool), hasher, tokens)
 
 	return httpapi.NewRouter(httpapi.Deps{
 		Auth:        auth,
@@ -53,13 +53,10 @@ func NewRouter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) (http.Ha
 	}), nil
 }
 
-// ResetPassword sets a new random password for the employee with the given email and ends their sessions.
 func ResetPassword(ctx context.Context, pool *pgxpool.Pool, email string) (string, error) {
-	// The command runs without JWT_SECRET; resetting a password does not issue a session, so no AuthService is needed.
 	return usecases.NewAccountService(postgres.NewEmployeeRepo(pool), password.Bcrypt{}, nil).ResetPassword(ctx, email)
 }
 
-// NewBotRunner builds the built-in Telegram bot: it polls every connected bot and talks to clients.
 func NewBotRunner(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *bot.Runner {
 	service := botRunnerService(pool)
 
@@ -75,5 +72,5 @@ func NewBotRunner(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *bot.
 	}
 
 	engine := bot.NewEngine(service, postgres.NewConversationRepo(pool), extractor, cfg.AppURL, log)
-	return bot.NewRunner(telegram.New(cfg.TelegramAPIURL), service, engine, postgres.NewLeaderLock(pool), cfg.Runner, log)
+	return bot.NewRunner(telegram.New(cfg.TelegramAPIURL), service, engine, postgres.NewUpdateRepo(pool), postgres.NewLeaderLock(pool), cfg.Runner, log)
 }

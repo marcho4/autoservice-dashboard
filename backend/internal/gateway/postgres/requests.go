@@ -77,7 +77,6 @@ const requestColumns = `r.id, r.autoservice_id, r.client_id, r.number, r.status,
 
 const requestFilterCondition = `r.autoservice_id = $1 AND ($2::text IS NULL OR r.status = $2)`
 
-// answersJSON scans the jsonb answers column into the request.
 type answersJSON struct{ dst *[]domain.Answer }
 
 func (a answersJSON) Scan(src any) error {
@@ -125,9 +124,6 @@ func orderBy(s domain.SortOrder) string {
 	return "r.created_at DESC, r.id DESC"
 }
 
-// Create stores the request under req.ID and the next per-autoservice number.
-// A service that was deleted while the client was filling the form is stored by name only.
-// The number is taken in the same statement as the insert, so a failed insert (e.g. a taken ID) does not use it up.
 func (r *RequestRepo) Create(ctx context.Context, req domain.Request) (domain.Request, error) {
 	return scanRequest(r.db.QueryRow(ctx,
 		`WITH seq AS (

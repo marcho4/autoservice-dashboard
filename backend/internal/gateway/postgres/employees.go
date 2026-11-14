@@ -30,10 +30,22 @@ func emailTaken(err error) error {
 	return err
 }
 
-func (r *EmployeeRepo) Create(ctx context.Context, e domain.Employee) (domain.Employee, error) {
-	out, err := scanEmployee(r.db.QueryRow(ctx,
-		`INSERT INTO employees (email, full_name, password_hash) VALUES ($1, $2, $3) RETURNING `+employeeColumns,
-		e.Email, e.FullName, e.PasswordHash))
+func (r *EmployeeRepo) Create(ctx context.Context, e domain.Employee, autoservice *domain.AutoserviceInput) (domain.Employee, error) {
+	var out domain.Employee
+	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+		var err error
+		out, err = scanEmployee(tx.QueryRow(ctx,
+			`INSERT INTO employees (email, full_name, password_hash) VALUES ($1, $2, $3) RETURNING `+employeeColumns,
+			e.Email, e.FullName, e.PasswordHash))
+		if err != nil || autoservice == nil {
+			return err
+		}
+		_, err = createAutoservice(ctx, tx, domain.Autoservice{
+			OwnerID: out.ID, Name: autoservice.Name, Address: autoservice.Address,
+			Phone: autoservice.Phone, Description: autoservice.Description,
+		}, domain.DefaultServices())
+		return err
+	})
 	return out, emailTaken(err)
 }
 

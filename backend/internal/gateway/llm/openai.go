@@ -1,4 +1,3 @@
-// Package llm talks to any OpenAI-compatible chat completions API (OpenAI, OpenRouter, a local model server, ...).
 package llm
 
 import (
@@ -23,16 +22,15 @@ import (
 )
 
 type Config struct {
-	BaseURL string // e.g. https://api.openai.com/v1
-	APIKey  string // may be empty for a local server
+	BaseURL string
+	APIKey  string
 	Model   string
 	Timeout time.Duration
 }
 
 type Client struct {
-	cfg  Config
-	http *http.Client
-	// noJSONMode is set once the provider rejects response_format; the prompt alone then asks for JSON.
+	cfg        Config
+	http       *http.Client
 	noJSONMode atomic.Bool
 }
 
@@ -67,18 +65,15 @@ type chatResponse struct {
 	} `json:"usage"`
 }
 
-// statusError carries only the status: the provider's error body may echo the prompt with client data.
 type statusError struct{ status int }
 
 func (e *statusError) Error() string { return fmt.Sprintf("llm: status %d", e.status) }
 
-// complete sends one system+user exchange and returns the text of the answer.
 func (c *Client) complete(ctx context.Context, system, user string) (string, error) {
 	jsonMode := !c.noJSONMode.Load()
 	out, err := c.send(ctx, system, user, jsonMode)
 	var se *statusError
 	if jsonMode && errors.As(err, &se) && se.status == http.StatusBadRequest {
-		// Not every OpenAI-compatible server knows response_format.
 		if out, err = c.send(ctx, system, user, false); err == nil {
 			c.noJSONMode.Store(true)
 		}
@@ -156,10 +151,8 @@ type promptService struct {
 	Fields      []promptField `json:"fields"`
 }
 
-// maxCatalogLength keeps one huge catalog from spending the shared LLM key.
 const maxCatalogLength = 20000
 
-// buildPrompt lists the services under short numeric keys: they are cheaper and harder to garble than UUIDs.
 func buildPrompt(in bot.ExtractInput) (string, error) {
 	services := make([]promptService, len(in.Services))
 	for i, s := range in.Services {
@@ -176,7 +169,6 @@ func buildPrompt(in bot.ExtractInput) (string, error) {
 	return fmt.Sprintf(systemPrompt, in.Autoservice, catalog), nil
 }
 
-// Extract implements bot.Extractor.
 func (c *Client) Extract(ctx context.Context, in bot.ExtractInput) (bot.Extraction, error) {
 	start := time.Now()
 	var ext bot.Extraction
@@ -197,7 +189,6 @@ func (c *Client) Extract(ctx context.Context, in bot.ExtractInput) (bot.Extracti
 	return ext, err
 }
 
-// parseExtraction reads the model's answer leniently: models wrap JSON in code fences and mix value types.
 func parseExtraction(answer string, services []domain.Service) (bot.Extraction, error) {
 	start, end := strings.Index(answer, "{"), strings.LastIndex(answer, "}")
 	if start < 0 || end <= start {
@@ -226,7 +217,6 @@ func parseExtraction(answer string, services []domain.Service) (bot.Extraction, 
 	return ext, nil
 }
 
-// scalar turns a JSON string or number into text; null, objects and arrays become "".
 func scalar(v any) string {
 	switch x := v.(type) {
 	case string:

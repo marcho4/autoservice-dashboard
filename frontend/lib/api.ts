@@ -180,7 +180,6 @@ async function request<T>(url: string, method: string, body?: unknown): Promise<
     cache: "no-store",
   });
   if (res.status === 401 && !url.startsWith("/api/session")) {
-    // Session expired or revoked: full reload drops all client state.
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = "/login";
   }
@@ -227,7 +226,6 @@ export function formatDate(iso: string): string {
 
 const TIME: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
 
-// How fresh something is, the way people say it: "5 мин назад", "сегодня, 21:48", "вчера, 09:10", then the date.
 export function formatWhen(iso: string, now = new Date()): string {
   const date = new Date(iso);
   const minutes = Math.floor((now.getTime() - date.getTime()) / 60000);
@@ -247,7 +245,6 @@ export function formatWhen(iso: string, now = new Date()): string {
 
 const pluralRules = new Intl.PluralRules("ru-RU");
 
-// "1 заявка", "2 заявки", "5 заявок"
 export function requestsCount(n: number): string {
   const forms: Record<string, string> = { one: "заявка", few: "заявки" };
   return `${n} ${forms[pluralRules.select(n)] ?? "заявок"}`;
@@ -266,7 +263,6 @@ export function clientName(c: Client): string {
   return c.name || (c.telegram_username ? `@${c.telegram_username}` : `ID ${c.telegram_id}`);
 }
 
-// One-line digest of the answered form for tables and lists.
 export function answersDigest(r: ServiceRequest): string {
   return r.answers.map((a) => a.value).join(" · ") || r.message;
 }

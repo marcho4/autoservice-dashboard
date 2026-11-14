@@ -30,12 +30,10 @@ type Deps struct {
 	Catalog     *usecases.CatalogService
 	Dashboard   *usecases.DashboardService
 	BotRunner   *usecases.BotRunnerService
-	// BotAPIKey protects the internal API for external bot runners; when empty the API is not mounted.
-	BotAPIKey string
-	Logger    *slog.Logger
-	Ready     func(ctx context.Context) error
-	// Stats appends the gauges that are read from the database to a metrics scrape.
-	Stats func(ctx context.Context, w io.Writer) error
+	BotAPIKey   string
+	Logger      *slog.Logger
+	Ready       func(ctx context.Context) error
+	Stats       func(ctx context.Context, w io.Writer) error
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -71,7 +69,6 @@ func NewRouter(d Deps) http.Handler {
 	})
 	r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		metrics.WritePrometheus(w, true)
-		// Process metrics must stay available when the database is not.
 		if err := d.Stats(r.Context(), w); err != nil {
 			logger(r).Warn("database gauges are missing from the scrape", "error", err)
 		}

@@ -7,7 +7,6 @@ import (
 	"sync"
 )
 
-// LLM is a fake OpenAI-compatible chat completions server. Reply decides the answer for each request.
 type LLM struct {
 	Server *httptest.Server
 
@@ -32,7 +31,6 @@ func NewLLM() *LLM {
 
 func (l *LLM) Close() { l.Server.Close() }
 
-// URL is the base URL to put into LLM_BASE_URL.
 func (l *LLM) URL() string { return l.Server.URL + "/v1" }
 
 func (l *LLM) SetReply(reply func(system, user string) (status int, content string)) {

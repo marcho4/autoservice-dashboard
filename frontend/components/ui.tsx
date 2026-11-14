@@ -23,7 +23,6 @@ const ICONS = {
   check: "M20 6 9 17l-5-5",
 };
 
-// Icons are decoration next to a text label or inside a button that carries its own aria-label.
 export function Icon({ name, className = "size-4" }: { name: keyof typeof ICONS; className?: string }) {
   return (
     <svg
@@ -41,7 +40,6 @@ export function Icon({ name, className = "size-4" }: { name: keyof typeof ICONS;
   );
 }
 
-// The product mark: a hex nut. Replaces the wrench emoji.
 export function Logo({ className = "size-7" }: { className?: string }) {
   return (
     <svg viewBox="0 0 28 28" aria-hidden="true" className={`shrink-0 ${className}`}>
@@ -66,13 +64,11 @@ const buttonVariants = {
 const buttonSizes = {
   md: "min-h-control px-4 text-body",
   sm: "min-h-control-sm px-3 text-meta",
-  // A square icon button: pass an aria-label.
   icon: "size-control-sm",
 };
 
 type ButtonLook = { variant?: keyof typeof buttonVariants; size?: keyof typeof buttonSizes };
 
-// Classes of a button, for links that have to look like one. The press answers at once: the scale has no delay.
 export function buttonClass({ variant = "primary", size = "md" }: ButtonLook = {}, className = "") {
   return `inline-flex shrink-0 items-center justify-center gap-2 rounded-control py-1.5 text-center leading-tight font-semibold transition-[background-color,color,scale] duration-150 ease-out select-none motion-safe:active:scale-[0.97] disabled:scale-100 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-sunken disabled:text-ink-3 ${buttonVariants[variant]} ${buttonSizes[size]} ${className}`;
 }
@@ -81,22 +77,18 @@ export function Button({ variant, size, className, ...props }: ButtonHTMLAttribu
   return <button className={buttonClass({ variant, size }, className)} {...props} />;
 }
 
-// A link inside a sentence.
 export const textLinkClass = "font-medium text-ink underline decoration-line-input underline-offset-4 hover:decoration-ink";
 
-// A standalone text link: tall enough for a finger.
 export const linkClass = `inline-flex min-h-control-sm items-center ${textLinkClass}`;
 
 export function IconButton({ label, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
   return <Button type="button" variant="secondary" size="icon" title={label} aria-label={label} {...props} />;
 }
 
-// A group of buttons: full-width and stacked under a thumb, in a row where there is room.
 export function Actions({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">{children}</div>;
 }
 
-// The main action of the product: one tap dials the client.
 export function CallButton({ phone, name, large, className }: { phone: string; name: string; large?: boolean; className?: string }) {
   const number = <span className="font-semibold tabular-nums">{formatPhone(phone)}</span>;
   return (
@@ -118,7 +110,6 @@ export function CallButton({ phone, name, large, className }: { phone: string; n
   );
 }
 
-// Copies a text and says so on the button itself.
 export function CopyButton({ text, children }: { text: string; children: ReactNode }) {
   const [copied, setCopied] = useState(false);
 
@@ -167,7 +158,6 @@ export function Field({ label, hint, className = "", ...props }: InputHTMLAttrib
   );
 }
 
-// invalid marks the field and turns the hint into the reason, before anything is submitted.
 export function TextArea({ label, hint, invalid, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & FieldExtras & { invalid?: boolean }) {
   const hintId = useId();
   return (
@@ -194,14 +184,10 @@ export function Select({ label, ...props }: SelectHTMLAttributes<HTMLSelectEleme
 
 const panelClass = "rounded-panel border bg-surface";
 
-// A list of rows on one surface, split by hairlines instead of a card per row.
 export const listClass = `divide-y divide-line overflow-hidden border-line ${panelClass}`;
 
-// A link stretched over its row (the row is `relative`): the whole card opens, and darkens under the finger.
-// Buttons inside the row go above it with `relative z-10`.
 export const rowLinkClass = "block text-heading after:absolute after:inset-0 active:after:bg-ink/5";
 
-// Desktop table; a phone gets cards instead (see the pages).
 export function Table({ children }: { children: ReactNode }) {
   return (
     <div className={`hidden overflow-x-auto border-line sm:block ${panelClass}`}>
@@ -214,9 +200,7 @@ export function Table({ children }: { children: ReactNode }) {
 
 const cardOutlines = {
   line: "border-line",
-  // The card being edited.
   ink: "border-ink",
-  // Something switched off: told apart by shape, not by transparency.
   dashed: "border-dashed border-line-strong",
 };
 
@@ -251,7 +235,6 @@ const alertStyles = {
   success: "border-ok/30 bg-ok-soft text-ok",
 };
 
-// Errors interrupt a screen reader, confirmations wait for a pause.
 export function Alert({ kind = "error", children }: { kind?: keyof typeof alertStyles; children: ReactNode }) {
   return (
     <div role={kind === "error" ? "alert" : "status"} className={`flex gap-2 rounded-control border px-3 py-2.5 font-medium ${alertStyles[kind]}`}>
@@ -277,7 +260,6 @@ export function Badge({ tone, children }: { tone: keyof typeof badgeTones; child
   );
 }
 
-// Only a new request wears the accent: it is the one waiting for the master.
 const statusTones: Record<RequestStatus, keyof typeof badgeTones> = {
   new: "accent",
   in_progress: "outline",
@@ -295,7 +277,6 @@ export function StatusBadge({ status }: { status: RequestStatus }) {
   );
 }
 
-// "сегодня, 21:48" for the eye, the full date in the tooltip.
 export function When({ iso, className }: { iso: string; className?: string }) {
   return (
     <time dateTime={iso} title={formatDate(iso)} className={`whitespace-nowrap ${className ?? ""}`}>
@@ -332,7 +313,6 @@ export function PageTitle({
   );
 }
 
-// Label over value: request answers, contacts, bot details.
 export function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
@@ -352,7 +332,6 @@ export function Empty({ title, children, actions }: { title: string; children?: 
   );
 }
 
-// Placeholder bars in the shape of the content to come; they pulse only if motion is welcome.
 export function Loading() {
   return (
     <div role="status" aria-busy="true" aria-label="Загрузка" className={`space-y-3 border-line p-4 sm:p-5 ${panelClass}`}>

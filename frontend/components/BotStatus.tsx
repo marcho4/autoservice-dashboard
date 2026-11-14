@@ -18,7 +18,6 @@ export function botErrorText(bot: Bot): string {
   return BOT_ERRORS[bot.status_error] ?? "Бот остановился из-за ошибки. Попробуйте подключить токен заново.";
 }
 
-// What the owner sends to clients: the bot link with a line that says what it is for.
 export function clientInvite(serviceName: string, bot: Bot): string {
   return `Оставить заявку в автосервис «${serviceName}»: ${bot.link}`;
 }

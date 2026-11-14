@@ -10,7 +10,6 @@ import { useBot } from "@/lib/useBot";
 
 const STEPS = ["Аккаунт", "Бот", "Уведомления"];
 
-// current is the step in progress; STEPS.length means everything is done.
 function Stepper({ current }: { current: number }) {
   return (
     <ol className="mb-6 flex flex-wrap items-center gap-x-2 gap-y-1 text-meta">
@@ -34,7 +33,6 @@ function Stepper({ current }: { current: number }) {
   );
 }
 
-// A task of the last step: what to do and why, then its buttons — stacked, so the text keeps its full width.
 function Task({ title, children, actions }: { title: ReactNode; children: ReactNode; actions: ReactNode }) {
   return (
     <li className="py-4">
@@ -48,7 +46,6 @@ function Task({ title, children, actions }: { title: ReactNode; children: ReactN
 }
 
 export default function OnboardingPage() {
-  // undefined: loading, null: the account has no autoservice yet (registered before autoservices were part of sign-up).
   const [service, setService] = useState<Autoservice | null | undefined>(undefined);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -78,7 +75,6 @@ export default function OnboardingPage() {
   }
 
   const loading = service === undefined || (service !== null && bot === undefined);
-  // Without a recipient nobody learns about a new request, so the bot alone is not the finish.
   const notified = Boolean(bot && bot.recipients.length > 0);
   const step = !service ? 0 : !bot || bot.status === "error" ? 1 : notified ? 3 : 2;
 

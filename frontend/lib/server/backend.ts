@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 
 export const SESSION_COOKIE = "session";
 
-// Read at request time, so one image works in every environment.
 export function backendUrl(): string {
   const url = process.env.BACKEND_URL;
   if (!url) throw new Error("BACKEND_URL is not set");

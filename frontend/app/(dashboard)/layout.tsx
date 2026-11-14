@@ -8,7 +8,6 @@ import { Button, buttonClass, Logo } from "@/components/ui";
 import { api, Autoservice, Employee } from "@/lib/api";
 import { useBot } from "@/lib/useBot";
 
-// short is the label of the bottom bar on a phone: five items have to fit a 320px screen without clipping.
 const NAV = [
   { href: "/requests", label: "Заявки" },
   { href: "/clients", label: "Клиенты" },
@@ -51,10 +50,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     router.refresh();
   }
 
-  // The settings page shows the bot state itself.
   const showBotBanner = pathname !== "/service";
 
-  // Selected is ink (weight and a rule), never the accent: the accent is kept for what waits for the master.
   const links = (variant: "top" | "bottom") =>
     NAV.map((item) => {
       const active = pathname === item.href || pathname.startsWith(item.href + "/");
@@ -107,7 +104,6 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
       <main className="mx-auto max-w-6xl px-4 pt-6 pb-[calc(var(--spacing-tabbar)+env(safe-area-inset-bottom)+2rem)] sm:pt-8 sm:pb-12">{children}</main>
 
-      {/* On a phone the sections live under the thumb; nothing is clipped or scrolled sideways. */}
       <nav aria-label="Разделы" className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] sm:hidden">
         <div className="flex h-tabbar">{links("bottom")}</div>
       </nav>

@@ -33,7 +33,6 @@ const (
 	maxServiceDescribe = 500
 )
 
-// FormField is one question of a service form. It is stored as JSON inside the service row.
 type FormField struct {
 	ID       string    `json:"id"`
 	Label    string    `json:"label"`
@@ -43,7 +42,6 @@ type FormField struct {
 	Options  []string  `json:"options,omitempty"`
 }
 
-// Prompt is the text the bot sends to ask for this field.
 func (f FormField) Prompt() string {
 	if f.Question != "" {
 		return f.Question
@@ -51,7 +49,6 @@ func (f FormField) Prompt() string {
 	return "Укажите: " + lowerFirst(f.Label)
 }
 
-// ParseAnswer validates a raw client (or LLM) answer and returns its normalized form.
 func (f FormField) ParseAnswer(raw string) (string, bool) {
 	raw = strings.Join(strings.Fields(raw), " ")
 	if raw == "" {
@@ -193,8 +190,6 @@ func lowerFirst(s string) string {
 	return strings.ToLower(string(r)) + s[size:]
 }
 
-// DefaultServices is the starter catalog every new autoservice gets,
-// so the bot can take requests right after the token is connected.
 func DefaultServices() []ServiceInput {
 	car := FormField{Label: "Автомобиль", Question: "Какой у вас автомобиль? Напишите марку, модель и год выпуска.", Type: FieldText, Required: true}
 	when := FormField{Label: "Удобное время", Question: "Когда вам было бы удобно приехать? Точное время мастер согласует с вами по телефону.", Type: FieldText}
@@ -250,7 +245,6 @@ func DefaultServices() []ServiceInput {
 			},
 		},
 	}
-	// Normalize gives every field its ID.
 	for i, svc := range services {
 		services[i], _ = svc.Normalize()
 	}
