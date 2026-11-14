@@ -373,6 +373,7 @@ func identity(u telegram.User) domain.ClientIdentity {
 }
 
 func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, log *slog.Logger) (handleErr error) {
+	start := time.Now()
 	defer func() {
 		if p := recover(); p != nil {
 			handleErr = fmt.Errorf("bot update panic: %v", p)
@@ -396,6 +397,10 @@ func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, 
 		go func() { _ = r.tg.SendTyping(ctx, bot.Token, in.ChatID) }()
 	}
 	metrics.GetOrCreateCounter(`bot_updates_total{kind="` + kind + `"}`).Inc()
+	defer func() {
+		metrics.GetOrCreateHistogram(`bot_update_duration_milliseconds{kind="` + kind + `"}`).
+			Update(float64(time.Since(start).Milliseconds()))
+	}()
 
 	in.UpdateID, in.BotID = u.UpdateID, bot.TelegramBotID
 	res, err := r.engine.Handle(ctx, bot.AutoserviceID, in)

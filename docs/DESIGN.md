@@ -185,9 +185,9 @@ MVP должен ответить на три вопроса. Ниже — по�
 | --- | --- | --- |
 | Есть ли опрашивающий процесс | `bot_runner_leader` (1 у лидера), `bot_runner_bots` | `sum(bot_runner_leader) == 0` дольше пары минут — ни один бот не отвечает клиентам. Самый важный алерт |
 | Состояние ботов | `bots_by_status{status,reason}` | `status="error"`: `unauthorized` — владелец отозвал токен, `conflict` — бота опрашивает кто-то ещё, `unavailable` — нет связи с Telegram. `pending` дольше минуты — раннер не подхватил бота |
-| Ошибки обработки сообщений | `bot_update_errors_total`, `bot_updates_dropped_total`, `bot_updates_total{kind}` | Клиент получил «что-то пошло не так» или не получил ответа вовсе. В норме ноль |
+| Обработка сообщений | `bot_updates_total{kind}`, `bot_update_errors_total`, `bot_update_duration_milliseconds{kind}`, `bot_updates_pending` | Ошибки — клиент получил «что-то пошло не так», в норме ноль. Длительность — сколько клиент ждёт ответа бота вместе с LLM и Telegram. `bot_updates_pending` — апдейты, сохранённые в базе и ещё не обработанные: растёт — бот не успевает или повторяет один и тот же апдейт |
 | Доставка уведомлений мастеру | `bot_notifications_total{delivered}` | `delivered="false"` — мастер не узнал о заявке (например, заблокировал бота) |
-| Вызовы Telegram | `telegram_requests_total{method,ok}` | Доля `ok="false"` по `sendMessage` — бот не может ответить клиентам |
+| Вызовы Telegram | `telegram_requests_total{method,ok}`, `telegram_request_duration_milliseconds{method}` | Доля `ok="false"` по `sendMessage` — бот не может ответить клиентам. Длительность `getUpdates` — это long polling, её не смотрите |
 | HTTP API кабинета | `http_requests_total{method,route,status}`, `http_request_duration_milliseconds{method,route}` | Ошибки 5xx и задержка кабинета |
 
 Примеры запросов (MetricsQL, как в VictoriaMetrics из этого репозитория):
