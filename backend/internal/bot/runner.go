@@ -332,6 +332,7 @@ func identity(u telegram.User) domain.ClientIdentity {
 }
 
 func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, log *slog.Logger) {
+	start := time.Now()
 	var in Incoming
 	kind := "message"
 	switch {
@@ -349,6 +350,11 @@ func (r *Runner) handle(ctx context.Context, bot domain.Bot, u telegram.Update, 
 		go func() { _ = r.tg.SendTyping(ctx, bot.Token, in.ChatID) }()
 	}
 	metrics.GetOrCreateCounter(`bot_updates_total{kind="` + kind + `"}`).Inc()
+	// How long the client waits for the bot's answer, LLM and Telegram calls included.
+	defer func() {
+		metrics.GetOrCreateHistogram(`bot_update_duration_milliseconds{kind="` + kind + `"}`).
+			Update(float64(time.Since(start).Milliseconds()))
+	}()
 
 	res, err := r.engine.Handle(ctx, bot.AutoserviceID, in)
 	if err != nil {
