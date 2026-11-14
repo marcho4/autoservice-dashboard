@@ -13,11 +13,11 @@
 ## Установка
 
 ```sh
-kubectl apply -f deploy
+./scripts/deploy.sh vX.Y.Z
 TELEGRAM_BOT_TOKEN=<токен бота для алертов> ./deploy/monitoring/install.sh
 ```
 
-`kubectl apply -f deploy` не заходит в эту папку, values-файлы в кластер как манифесты не попадают.
+Приложение выкатывается отдельно, см. [../README.md](../README.md).
 Скрипт можно запускать повторно: `helm upgrade --install` приводит релизы к текущим values.
 Токен бота хранится в секрете `alertmanager-telegram`, его нужно передать только при первом запуске или при смене.
 

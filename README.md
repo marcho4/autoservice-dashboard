@@ -85,8 +85,9 @@ backend/   Go: HTTP API (chi), PostgreSQL (pgx), бот
   internal/gateway/llm       клиент OpenAI-совместимого API и промпт
   internal/testkit           фейковые Telegram и LLM для тестов
 frontend/  Next.js: кабинет (заявки, клиенты, услуги, автосервис и бот)
-deploy/    манифесты Kubernetes
+deploy/    манифесты Kubernetes; как выкатывать версии — deploy/README.md
   monitoring/                helm values и скрипт установки: VictoriaMetrics, алерты, VictoriaLogs, Grafana
+scripts/   release.sh (тег версии), deploy.sh (выкатка и откат), init-secrets.sh, emulate-load.sh
 ```
 
 ## Тесты

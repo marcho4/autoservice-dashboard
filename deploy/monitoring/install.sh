@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Мониторинг в кластере: VictoriaMetrics, vmalert + Alertmanager, VictoriaLogs, Grafana.
-# Сначала приложение: kubectl apply -f deploy (namespace autoservice и ConfigMap alerts).
+# Сначала приложение: ./scripts/deploy.sh vX.Y.Z (namespace autoservice и ConfigMap alerts).
 # Первый запуск: TELEGRAM_BOT_TOKEN=<токен бота для алертов> ./deploy/monitoring/install.sh
 # Повторный запуск обновляет релизы под текущие values, токен тогда можно не передавать.
 set -euo pipefail
